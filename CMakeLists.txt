@@ -13,7 +13,9 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 add_executable(picoreseau
-    src/picoreseau.cpp     
+    src/picoreseau.cpp
+    src/clock_detect.cpp
+    src/clock_detect.h
     ${CMAKE_CURRENT_BINARY_DIR}/version.cpp
 )
 
@@ -23,11 +25,13 @@ ADD_CUSTOM_COMMAND(
     COMMAND ${CMAKE_COMMAND} -P
             ${CMAKE_CURRENT_SOURCE_DIR}/version.cmake)
 message(STATUS "CMAKE_CURRENT_BINARY_DIR = ${CMAKE_CURRENT_BINARY_DIR}")
-# Generate pio header
-#pico_generate_pio_header(picoreseau ${CMAKE_CURRENT_LIST_DIR}/src/picoreseau.pio)
+
+# Generate pio headers
+pico_generate_pio_header(picoreseau ${CMAKE_CURRENT_LIST_DIR}/src/picoreseau.pio)
+pico_generate_pio_header(picoreseau ${CMAKE_CURRENT_LIST_DIR}/src/hdlc.pio)
 
 # Add the standard library to the build
-target_link_libraries(picoreseau pico_stdlib pico_multicore hardware_pio)
+target_link_libraries(picoreseau pico_stdlib pico_multicore hardware_pio hardware_pwm)
 
 target_compile_options(picoreseau PUBLIC -Wall -Wextra -Wno-unused-function -Wno-unused-parameter)
 target_compile_definitions(picoreseau PUBLIC DEBUG N_SD_CARDS=1)

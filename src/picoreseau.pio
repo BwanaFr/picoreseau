@@ -1,0 +1,57 @@
+.define WAIT_CLOCK 30   ; Number of inactive clocks
+
+; Clock detection
+.program clockDetect
+
+set x, WAIT_CLOCK               ; Consider clock inactive after 30 cycles
+set pins, 1
+wait 1 pin 0
+start:
+    wait 0 pin 0 [15]           ; Waits for the clock to be low
+    jmp pin clk_found           ; We should get a positive level here
+    ; Clock not found in time
+    jmp x-- restart             ; Decrement X
+    jmp start
+restart:
+    set pins, 0
+    jmp start
+clk_found:
+    set pins, 1
+    set x, WAIT_CLOCK           ; Restart counter
+    jmp start                   ; Do it again
+
+; Waits for clock to be 0
+; Jump pin :
+; clock still 0, decrement counter
+; Goto 7 (after a delay)
+; if true
+; re-init counter
+
+
+% c-sdk {
+static inline void clockDetect_program_init(PIO pio, uint sm, uint offset, uint clkPin, uint outPin) {
+    pio_sm_config c = clockDetect_program_get_default_config(offset);
+
+    // Only one in pin
+    pio_sm_set_consecutive_pindirs(pio, sm, clkPin, 1, false);
+    sm_config_set_in_pins(&c, clkPin);
+    // Jump pin is the same as in pin
+    sm_config_set_jmp_pin(&c, clkPin);
+    // Set this pin's GPIO function (connect PIO to the pad)
+    pio_gpio_init(pio, clkPin);
+    //Sets the output pin as sideset
+    pio_gpio_init(pio, outPin);
+
+    // Set the pin direction to input at the PIO
+    pio_sm_set_consecutive_pindirs(pio, sm, outPin, 1, true);
+    sm_config_set_set_pins(&c, outPin, 1);
+
+    //Sets the clock divider
+    sm_config_set_clkdiv(&c, 12.5f);
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
+

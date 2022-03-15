@@ -1,0 +1,80 @@
+.define RX_CLK_INT 4    ; IRQ for RX clock
+.define RX_FLAG_INT 0   ; IRQ for flag detection
+.define RX_ABORT_INT 1   ; IRQ for abort detection
+
+; This program receives the clock
+.program hdlc_rx_clk
+
+.wrap_target
+wait 0 pin 0        ; Wait for rising edge of clock
+wait 1 pin 0        
+irq RX_CLK_INT      ; Generates interrupt for other state machine
+.wrap
+
+
+.program hdlc_hunter
+.wrap_target
+restart:
+set x, 7                    ; Number of consecutive one received
+
+hunt:
+wait 0 pin 0
+wait 1 pin 0                ; Waits for clock rising edge
+jmp pin hunt_one            ; Goto hunt_one if the bit is one
+; We received a 0
+set y, 1                    ; If x == 1 -> We received 6 bits
+jmp x != y check_abort      ; Number of ones != 6, check if aborted
+; We received 6 consecutive 1.
+; Flag is found
+irq RX_FLAG_INT             ; Flag found, raise IRQ for MCU
+jmp restart                 ; Hunt next flag/abort
+
+check_abort:
+; Checks if abort is received
+jmp !x abort_rcv            ; Received more than 6 ones abort is received
+jmp hunt                    ; Received less than 6 ones, this is a data RX
+
+abort_rcv:
+irq RX_ABORT_INT            ; Raise an IRQ for abort
+jmp restart                 ; Hunt next flag/abort
+
+hunt_one:
+; We received a one
+jmp x-- hunt            ; Decrement counter (continue to hunt until 0)
+jmp hunt                ; Hunt again 
+
+.wrap
+
+
+; Program for RX of data
+.program hdlc_rx
+restart:
+set x, 7                ; Count number of ones received
+hunt:
+wait 1 irq RX_CLK_INT  ; Waits for IRQ
+jmp pin hunt_one        
+;0 received
+set y, 1
+jmp x!=y check_abort    ; Checks the abort flag
+;Here, the number of consecutive 1 is 6.
+;We found the flag
+jmp rx_bits
+check_abort:
+jmp !x abort_rcv
+jmp hunt
+
+abort_rcv:
+;Abort detected (more than 6 consecutive one)
+jmp restart
+
+hunt_one:
+;Received one
+jmp x-- hunt            ; Decrement counter
+jmp hunt                ; Hunt
+
+rx_bits:
+; Gets bits and ignore 0 if 5 consecutive 1 received
+; if got 6 bits, flag received
+; if got > 6 bits, abort received hunt again
+
+jmp rx_bits
