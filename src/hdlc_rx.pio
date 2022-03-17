@@ -1,0 +1,114 @@
+.define RX_FLAG_INT 0       ; IRQ for flag detection
+.define RX_ABORT_INT 1      ; IRQ for abort detection
+
+; Hunts the flag or the abort frame
+.program hdlc_hunter
+restart:
+set x, 6                    ; Number of consecutive ones to match flag
+set y, 7                    ; Number of consecutive ones (at least) to match abort 
+
+hunt:
+wait 0 pin 0
+wait 1 pin 0                ; Waits for clock rising edge
+jmp pin hunt_one_rcv        ; Goto hunt_one_rcv if the bit is one
+; We received a 0
+jmp !y abort_rcv            ; If y == 0 we received abort
+jmp !x flag_rcv             ; If x == 0 we received flag
+jmp restart                 ; This is data (or inserted 0), reset our counters
+
+abort_rcv:
+irq RX_ABORT_INT            ; Raise an IRQ for abort
+jmp restart                 ; Hunt next flag/abort
+
+flag_rcv:
+irq RX_FLAG_INT             ; Raise an IRQ for flag
+jmp restart                 ; Hunt next flag/abort
+
+hunt_one_rcv:
+; We received a one
+jmp !x hunt_one_rcv_abrt    ; Don't decrement X if already 0
+jmp x-- hunt_one_rcv_abrt   ; Decrement counter (continue to hunt until 0)
+hunt_one_rcv_abrt:
+jmp !y hunt                 ; Don't decrement Y if already 0
+jmp y-- hunt                ; Decrement counter (continue to hunt until 0)
+
+
+% c-sdk {
+/**
+    Initializes the hdlc_hunter PIO program
+    @param pio PIO engine to use
+    @param sm State machine number
+    @param offset State machine program offset
+    @param clkPin Clock pin
+    @param dataPin Data pin
+**/
+static inline void hdlc_hunter_program_init(PIO pio, uint sm, uint offset, uint clkPin, uint dataPin) {
+    pio_sm_config c = hdlc_hunter_program_get_default_config(offset);
+
+    // Only one in pin used for clock
+    pio_sm_set_consecutive_pindirs(pio, sm, clkPin, 1, false);
+    sm_config_set_in_pins(&c, clkPin);
+    // Jump pin is the same as in pin
+    sm_config_set_jmp_pin(&c, dataPin);
+
+    //Sets the clock divider
+    //sm_config_set_clkdiv(&c, 12.5f);
+
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
+
+; Handle receipt of data
+.program hdlc_rx
+restart:
+set x, 5         ; Expect to have a 0 after 5 consecutive ones
+
+receive:
+wait 0 pin 0
+wait 1 pin 0                ; Waits for clock rising edge
+jmp pin one_rcv             ; Goto one_rcv if the bit is one
+; We received a 0
+jmp !x restart              ; Received 5 consecutive 0 don't update ISR
+set y, 0                    ; Prepare ISR value
+in y, 1                     ; Shift the zero in the ISR
+jmp restart                 ; Reset counter and wait for next edge
+
+one_rcv:
+set y, 1                    ; Prepare ISR value
+in y, 1                     ; Shift the one in the ISR
+jmp !x receive              ; Don't decrement X if already 0 (maybe a check can be put here)
+jmp x-- receive             ; Decrement counter (continue to hunt until 0)
+
+% c-sdk {
+/**
+    Initializes the hdlc_rx PIO program
+    @param pio PIO engine to use
+    @param sm State machine number
+    @param offset State machine program offset
+    @param clkPin Clock pin
+    @param dataPin Data pin
+**/
+static inline void hdlc_rx_program_init(PIO pio, uint sm, uint offset, uint clkPin, uint dataPin) {
+    pio_sm_config c = hdlc_rx_program_get_default_config(offset);
+
+    // Only one in pin used for clock
+    pio_sm_set_consecutive_pindirs(pio, sm, clkPin, 1, false);
+    sm_config_set_in_pins(&c, clkPin);
+    // Jump pin is the same as in pin
+    sm_config_set_jmp_pin(&c, dataPin);
+
+    //Configure the RX FIFO
+    //Join TX and RX FIFO as we only do RX
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+    //Shift right, with autopush threshold of 8 bits
+    sm_config_set_in_shift(&c, true, true, 8);
+
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
