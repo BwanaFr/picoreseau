@@ -45,6 +45,37 @@ jmp hunt                ; Hunt again
 
 .wrap
 
+% c-sdk {
+/**
+    Initializes the hdlc_hunter PIO program
+    @param pio PIO engine to use
+**/
+static inline void hdlc_hunter_program_init(PIO pio, uint sm, uint offset, uint clkPin, uint dataPin) {
+    pio_sm_config c = clockDetect_program_get_default_config(offset);
+
+    // Only one in pin
+    pio_sm_set_consecutive_pindirs(pio, sm, clkPin, 1, false);
+    sm_config_set_in_pins(&c, clkPin);
+    // Jump pin is the same as in pin
+    sm_config_set_jmp_pin(&c, clkPin);
+    // Set this pin's GPIO function (connect PIO to the pad)
+    pio_gpio_init(pio, clkPin);
+    //Sets the output pin as sideset
+    pio_gpio_init(pio, outPin);
+
+    // Set the pin direction to input at the PIO
+    pio_sm_set_consecutive_pindirs(pio, sm, outPin, 1, true);
+    sm_config_set_set_pins(&c, outPin, 1);
+
+    //Sets the clock divider
+    sm_config_set_clkdiv(&c, 12.5f);
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
+
 
 ; Program for RX of data
 .program hdlc_rx
