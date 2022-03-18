@@ -1,0 +1,108 @@
+; State machines to emit HDLC encoded data
+
+.define CLK_INTERRUPT 4 ; IRQ number for clock falling edge
+
+;Simple program to generate a 500KHz TX clock
+.program clock_tx
+; Should run at 1Mhz
+.side_set 1
+.wrap_target
+nop side 1               ; Push clock to 1
+irq CLK_INTERRUPT side 0 ; Push clock to 0 and rise interrupt
+.wrap
+
+% c-sdk {
+/**
+    Initializes the clock_tx PIO program
+    @param pio PIO engine to use
+    @param sm State machine number
+    @param offset State machine program offset
+    @param clkPin Clock pin
+**/
+static inline void clock_tx_program_init(PIO pio, uint sm, uint offset, uint clkPin) {
+    pio_sm_config c = clock_tx_program_get_default_config(offset);
+
+    // Only one out pin used for clock
+    pio_sm_set_consecutive_pindirs(pio, sm, clkPin, 1, true);
+    pio_gpio_init(pio, clkPin);
+    sm_config_set_sideset_pins(&c, clkPin);
+
+    //Sets the clock divider to have 1Mhz (we are using 2 instructions)
+    sm_config_set_clkdiv(&c, 125.0f);
+
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, false);
+}
+%}
+
+; Program to send data to HDLC bus
+.program hdlc_tx
+send_flag_first_zero:
+; Send the flag
+wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
+set pins, 0                 ; Sets the pin to 0
+set x, 6                    ; Prepare to send 6 consecutive ones
+set y, 5                    ; Prepare to send no more than 5 ones
+send_flag_ones:
+wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
+set pins, 1                 ; Sets the pin to 1
+jmp x-- send_flag_ones      ; Loop until we send 6 ones
+;Send the remaining 0
+wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
+set pins, 0                 ; Sets the pin to 0
+;Wait for OSR to be filled
+jmp !osre tx_data           ; Jump to tx_data if OSR is not empty
+jmp send_flag_first_zero    ; OSR empty send flag again
+
+tx_data:
+out x, 1                    ; Get one bit from OSR
+jmp !x tx_zero              ; Jump to tx_zero if we have a 0
+;Got a one
+jmp x-- tx_one              ; Send a one if not 5 ones in a row
+; Sent 5 consective one, need to send an extra 0
+wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
+set pins, 0                 ; Sets the pin to 0
+set y,5                     ; Reset one counter to 5
+tx_one:
+wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
+set pins, 1                 ; Sets the pin to 1
+jmp !osre tx_data           ; Jump to tx_data if OSR is not empty
+jmp send_flag_first_zero    ; TX completed, send flag
+
+tx_zero:
+wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
+set pins, 0                 ; Sets the pin to 0
+set y,5                     ; Reset one counter to 5
+jmp !osre tx_data           ; Jump to tx_data if OSR is not empty
+jmp send_flag_first_zero    ; TX completed, send flag
+
+% c-sdk {
+/**
+    Initializes the hdlc_tx PIO program
+    @param pio PIO engine to use
+    @param sm State machine number
+    @param offset State machine program offset
+    @param dataPin Data pin
+**/
+static inline void hdlc_tx_program_init(PIO pio, uint sm, uint offset, uint dataPin) {
+    pio_sm_config c = hdlc_tx_program_get_default_config(offset);
+
+    // Only one out pin used for data
+    pio_sm_set_consecutive_pindirs(pio, sm, dataPin, 1, true);
+    sm_config_set_set_pins(&c, dataPin, 1);
+    pio_gpio_init(pio, dataPin);
+    
+    //Configure the TX FIFO
+    //Join TX and RX FIFO as we only do TX
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    //Shift right, with autopush threshold of 8 bits
+    sm_config_set_out_shift(&c, true, true, 8);
+
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

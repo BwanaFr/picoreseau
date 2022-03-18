@@ -1,3 +1,5 @@
+; State machines for receiving HDLC encoded bits
+
 .define RX_FLAG_INT 0       ; IRQ for flag detection
 .define RX_ABORT_INT 1      ; IRQ for abort detection
 

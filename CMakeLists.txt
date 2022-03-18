@@ -27,8 +27,8 @@ ADD_CUSTOM_COMMAND(
 message(STATUS "CMAKE_CURRENT_BINARY_DIR = ${CMAKE_CURRENT_BINARY_DIR}")
 
 # Generate pio headers
-pico_generate_pio_header(picoreseau ${CMAKE_CURRENT_LIST_DIR}/src/picoreseau.pio)
 pico_generate_pio_header(picoreseau ${CMAKE_CURRENT_LIST_DIR}/src/hdlc_rx.pio)
+pico_generate_pio_header(picoreseau ${CMAKE_CURRENT_LIST_DIR}/src/hdlc_tx.pio)
 
 # Add the standard library to the build
 target_link_libraries(picoreseau pico_stdlib pico_multicore hardware_pio hardware_pwm)
