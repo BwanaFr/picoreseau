@@ -2,6 +2,7 @@
 
 .define RX_FLAG_INT 0       ; IRQ for flag detection
 .define RX_ABORT_INT 1      ; IRQ for abort detection
+.define RX_FLAG_SM_INT 4    ; IRQ for flag detection (internal)
 
 ; Hunts the flag or the abort frame
 .program hdlc_hunter
@@ -23,7 +24,8 @@ irq RX_ABORT_INT            ; Raise an IRQ for abort
 jmp restart                 ; Hunt next flag/abort
 
 flag_rcv:
-irq RX_FLAG_INT             ; Raise an IRQ for flag
+irq RX_FLAG_INT             ; Raise IRQ for MCU
+irq RX_FLAG_SM_INT          ; Raise IRQ for internal use
 jmp restart                 ; Hunt next flag/abort
 
 hunt_one_rcv:
@@ -53,9 +55,6 @@ static inline void hdlc_hunter_program_init(PIO pio, uint sm, uint offset, uint 
     // Jump pin is the same as in pin
     sm_config_set_jmp_pin(&c, dataPin);
 
-    //Sets the clock divider
-    //sm_config_set_clkdiv(&c, 12.5f);
-
     // Load our configuration, and jump to the start of the program
     pio_sm_init(pio, sm, offset, &c);
     // Set the state machine running
@@ -65,8 +64,10 @@ static inline void hdlc_hunter_program_init(PIO pio, uint sm, uint offset, uint 
 
 ; Handle receipt of data
 .program hdlc_rx
+; Wait to receive the first flag
+wait 1 irq RX_FLAG_SM_INT
 restart:
-set x, 5         ; Expect to have a 0 after 5 consecutive ones
+set x, 5                    ; Expect to have a 0 after 5 consecutive ones
 
 receive:
 wait 0 pin 0
@@ -81,8 +82,12 @@ jmp restart                 ; Reset counter and wait for next edge
 one_rcv:
 set y, 1                    ; Prepare ISR value
 in y, 1                     ; Shift the one in the ISR
-jmp !x receive              ; Don't decrement X if already 0 (maybe a check can be put here)
-jmp x-- receive             ; Decrement counter (continue to hunt until 0)
+jmp !x end                  ; Received more than 5 consecutive one exit
+jmp x-- receive             ; Decrement counter
+
+end:
+;Stop state machine
+jmp end
 
 % c-sdk {
 /**

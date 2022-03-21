@@ -43,8 +43,8 @@ send_flag_first_zero:
 ; Send the flag
 wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
 set pins, 0                 ; Sets the pin to 0
-set x, 6                    ; Prepare to send 6 consecutive ones
-set y, 5                    ; Prepare to send no more than 5 ones
+set x, 5                    ; Prepare to send 6 consecutive ones
+set y, 4                    ; Prepare to send no more than 5 ones
 send_flag_ones:
 wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
 set pins, 1                 ; Sets the pin to 1
@@ -64,7 +64,7 @@ jmp x-- tx_one              ; Send a one if not 5 ones in a row
 ; Sent 5 consective one, need to send an extra 0
 wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
 set pins, 0                 ; Sets the pin to 0
-set y,5                     ; Reset one counter to 5
+set y, 4                    ; Reset one counter to 4 for counting 5 ones
 tx_one:
 wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
 set pins, 1                 ; Sets the pin to 1
@@ -74,7 +74,7 @@ jmp send_flag_first_zero    ; TX completed, send flag
 tx_zero:
 wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
 set pins, 0                 ; Sets the pin to 0
-set y,5                     ; Reset one counter to 5
+set y, 4                    ; Reset one counter to 4 for counting 5 ones
 jmp !osre tx_data           ; Jump to tx_data if OSR is not empty
 jmp send_flag_first_zero    ; TX completed, send flag
 

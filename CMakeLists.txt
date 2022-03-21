@@ -31,7 +31,7 @@ pico_generate_pio_header(picoreseau ${CMAKE_CURRENT_LIST_DIR}/src/hdlc_rx.pio)
 pico_generate_pio_header(picoreseau ${CMAKE_CURRENT_LIST_DIR}/src/hdlc_tx.pio)
 
 # Add the standard library to the build
-target_link_libraries(picoreseau pico_stdlib pico_multicore hardware_pio hardware_pwm)
+target_link_libraries(picoreseau pico_stdlib pico_multicore hardware_pio hardware_pwm hardware_dma)
 
 target_compile_options(picoreseau PUBLIC -Wall -Wextra -Wno-unused-function -Wno-unused-parameter)
 target_compile_definitions(picoreseau PUBLIC DEBUG N_SD_CARDS=1)
