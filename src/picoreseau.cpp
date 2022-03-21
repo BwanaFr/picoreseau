@@ -22,6 +22,7 @@ int rxDMAChannel = -1;  //Data reception DMA channel
 static volatile uint8_t rxBuffer[65535];    //Data reception buffer
 static volatile uint32_t rxCount = 0;       //Number of byte(s) transfered with DMA
 
+static uint8_t testData[] = {0x0, 0xFF, 0x2, 0xDE, 0x34};
 
 void arm_rx_dma();
 
@@ -73,6 +74,38 @@ void __isr dma_isr() {
 }
 
 /**
+ * Computes CRC using DMA sniffer
+ **/
+void test_crc(){
+    uint8_t dummy;
+    uint8_t sDMAChannel = dma_claim_unused_channel(true);
+    dma_channel_config c = dma_channel_get_default_config(sDMAChannel);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_sniff_enable(&c, true);
+
+    // Turn on CRC-16/X-25
+    dma_sniffer_enable(sDMAChannel, 0x3, true);
+    dma_hw->sniff_ctrl |= 0x800;    //Out inverted (bitwise complement, XOR out)
+    dma_hw->sniff_ctrl |= 0x400;    //Out bit-reversed
+    dma_hw->sniff_data = 0xFFFF;    //Start with 0xFFFF
+
+    dma_channel_configure(
+        sDMAChannel,
+        &c,
+        &dummy,
+        testData,
+        5,
+        true    // Start immediately
+    );
+
+    dma_channel_wait_for_finish_blocking(sDMAChannel);
+    dma_channel_unclaim(sDMAChannel);
+    printf("CRC is 0x%02lx\n", (dma_hw->sniff_data>>16));   //Shift as out bit reversed is set
+}
+
+/**
  * Application main entry
  **/
 int main() {
@@ -120,6 +153,8 @@ int main() {
         sleep_ms(100);
     }
     printf("\n");
+    test_crc();
+    return 0;
 
     //Test HDLC flag hunter
     /*uint64_t data = 0b0001111111000000;
