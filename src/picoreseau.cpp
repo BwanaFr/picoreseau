@@ -52,6 +52,7 @@ void arm_rx_dma() {
     dma_channel_config c = dma_channel_get_default_config(rxDMAChannel);
     channel_config_set_read_increment(&c, false);
     channel_config_set_write_increment(&c, false);
+    channel_config_set_sniff_enable(&c, true);
     channel_config_set_dreq(&c, pio_get_dreq(rxPIO, rxDataSM, false));
     channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
     dma_channel_configure(
@@ -153,8 +154,8 @@ int main() {
         sleep_ms(100);
     }
     printf("\n");
-    test_crc();
-    return 0;
+    // test_crc();
+    // return 0;
 
     //Test HDLC flag hunter
     /*uint64_t data = 0b0001111111000000;
@@ -204,7 +205,7 @@ int main() {
         printf("Before read : 0x%02lx\n", (rxByte>>24));
     }
     //Push bytes in the TX machine
-    uint8_t bytes[] = {0x1, 0x5, 0x3};
+    uint8_t bytes[] = {0x2, 0x5, 0x3};
     for(int i=0;i<3;++i){
         pio_sm_put_blocking(txPIO, txDataSM, bytes[i]);        
     }
@@ -213,14 +214,20 @@ int main() {
     pio_sm_set_enabled(txPIO, txClockSM, true);
     sleep_ms(1);
     pio_sm_set_enabled(txPIO, txClockSM, false);
+    dma_sniffer_enable(rxDMAChannel, 0x3, true);
+    dma_hw->sniff_ctrl |= 0x800;    //Out inverted (bitwise complement, XOR out)
+    dma_hw->sniff_ctrl |= 0x400;    //Out bit-reversed
+    dma_hw->sniff_data = 0xFFFF;    //Start with 0xFFFF
     arm_rx_dma();
-    
+    sleep_ms(200);
     while(!pio_sm_is_rx_fifo_empty(rxPIO, rxDataSM)){
         io_rw_8 *rxfifo_shift = (io_rw_8*)&rxPIO->rxf[rxDataSM] + 3;
         printf("FIFO : 0x%02x\n", (char)*rxfifo_shift);
         uint32_t rxByte = pio_sm_get_blocking (rxPIO, rxDataSM);
         printf("Read : 0x%02lx\n", (rxByte>>24));
     }
+    printf("CRC is 0x%02lx\n", (dma_hw->sniff_data>>16));
+
     /*
     for(int i=0;i<100;++i){
         pio_sm_restart(txPIO, txDataSM);
