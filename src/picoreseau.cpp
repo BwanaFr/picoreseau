@@ -22,7 +22,8 @@ int rxDMAChannel = -1;  //Data reception DMA channel
 static volatile uint8_t rxBuffer[65535];    //Data reception buffer
 static volatile uint32_t rxCount = 0;       //Number of byte(s) transfered with DMA
 
-static uint8_t testData[] = {0x0, 0xFF, 0x2, 0xDE, 0x34};
+static uint8_t testData[] = {0x3, 0xFF, 0xFF, 0x1F, 0x12, 0x0, 0x0};
+static uint testDataLen = sizeof(testData)-2;
 
 void arm_rx_dma();
 
@@ -77,7 +78,7 @@ void __isr dma_isr() {
 /**
  * Computes CRC using DMA sniffer
  **/
-void test_crc(){
+void add_crc(uint8_t* buffer, uint len){
     uint8_t dummy;
     uint8_t sDMAChannel = dma_claim_unused_channel(true);
     dma_channel_config c = dma_channel_get_default_config(sDMAChannel);
@@ -96,14 +97,16 @@ void test_crc(){
         sDMAChannel,
         &c,
         &dummy,
-        testData,
-        5,
+        buffer,
+        len,
         true    // Start immediately
     );
 
     dma_channel_wait_for_finish_blocking(sDMAChannel);
     dma_channel_unclaim(sDMAChannel);
     printf("CRC is 0x%02lx\n", (dma_hw->sniff_data>>16));   //Shift as out bit reversed is set
+    buffer[len] = (dma_hw->sniff_data>>16) & 0xFF;
+    buffer[len+1] = (dma_hw->sniff_data>>24) & 0xFF;
 }
 
 /**
@@ -154,89 +157,23 @@ int main() {
         sleep_ms(100);
     }
     printf("\n");
-    // test_crc();
-    // return 0;
-
-    //Test HDLC flag hunter
-    /*uint64_t data = 0b0001111111000000;
-    for(int i=0;i<16;++i){
-        bool dataBit = (data >> i) & 0x1;
-        gpio_put(DATA_PIN, dataBit);
-        sleep_us(1);
-        gpio_put(CLK_PIN, true);
-        sleep_us(1);
-        gpio_put(CLK_PIN, false);
-    }*/
-
-    //Test HDLC rx
-    /*uint8_t bytes[] = {0xFF, 0x2, 0x3};
-    for(int i=0;i<3;++i){
-        uint8_t data = bytes[i];
-        uint oneCount = 0;
-        printf("Sending : ");
-        for(int j=0;j<8;++j){
-            bool dataBit = (data >> j) & 0x1;
-            if(dataBit){
-                // Insert a zero if one count > 5
-                if(++oneCount>5){
-                    dataBit = false;
-                    --j;
-                }
-            }
-            if(!dataBit){
-                oneCount = 0;
-            }
-            gpio_put(DATA_PIN, dataBit);
-            // sleep_us(2);
-            gpio_put(CLK_PIN, true);
-            // sleep_us(2);
-            gpio_put(CLK_PIN, false);
-            printf("%d", dataBit ? 1 : 0);
-        }
-        printf("\nWrote : 0x%02x\n", data);
-        if(!pio_sm_is_rx_fifo_empty(rxPIO, sm)){
-            uint32_t rxByte = pio_sm_get_blocking (pio, sm);
-            printf("Read : 0x%02lx\n", (rxByte>>24));
-        }
-    }*/
-
-    while(!pio_sm_is_rx_fifo_empty(rxPIO, rxDataSM)){
-        uint32_t rxByte = pio_sm_get_blocking (rxPIO, rxDataSM);
-        printf("Before read : 0x%02lx\n", (rxByte>>24));
-    }
+    printf("Sending %u bytes\n", testDataLen);
+    add_crc(testData, testDataLen);
     //Push bytes in the TX machine
-    uint8_t bytes[] = {0x2, 0x5, 0x3};
-    for(int i=0;i<3;++i){
-        pio_sm_put_blocking(txPIO, txDataSM, bytes[i]);        
+    for(uint i=0;i<testDataLen+2;++i){
+        pio_sm_put_blocking(txPIO, txDataSM, testData[i]);        
     }
     //arm_rx_dma();
     //Enable the TX clock
     pio_sm_set_enabled(txPIO, txClockSM, true);
     sleep_ms(1);
     pio_sm_set_enabled(txPIO, txClockSM, false);
-    dma_sniffer_enable(rxDMAChannel, 0x3, true);
-    dma_hw->sniff_ctrl |= 0x800;    //Out inverted (bitwise complement, XOR out)
-    dma_hw->sniff_ctrl |= 0x400;    //Out bit-reversed
-    dma_hw->sniff_data = 0xFFFF;    //Start with 0xFFFF
-    arm_rx_dma();
-    sleep_ms(200);
+    //ARM DMA RX
+    //arm_rx_dma();
     while(!pio_sm_is_rx_fifo_empty(rxPIO, rxDataSM)){
-        io_rw_8 *rxfifo_shift = (io_rw_8*)&rxPIO->rxf[rxDataSM] + 3;
-        printf("FIFO : 0x%02x\n", (char)*rxfifo_shift);
         uint32_t rxByte = pio_sm_get_blocking (rxPIO, rxDataSM);
         printf("Read : 0x%02lx\n", (rxByte>>24));
     }
-    printf("CRC is 0x%02lx\n", (dma_hw->sniff_data>>16));
-
-    /*
-    for(int i=0;i<100;++i){
-        pio_sm_restart(txPIO, txDataSM);
-        pio_sm_set_enabled(txPIO, txClockSM, true);
-        sleep_ms(200);
-        pio_sm_set_enabled(txPIO, txClockSM, false);
-        sleep_ms(2000);
-    }*/
-
     //Completed loop
     while(true){        
         sleep_ms(200);
