@@ -2,6 +2,7 @@
 
 .define RX_FLAG_INT 0       ; IRQ for flag detection
 .define RX_ABORT_INT 1      ; IRQ for abort detection
+.define RX_DATA_DONE 2      ; IRQ for RX data done
 .define RX_FLAG_SM_INT 4    ; IRQ for flag detection (internal)
 
 ; Hunts the flag or the abort frame
@@ -82,11 +83,13 @@ jmp restart                 ; Reset counter and wait for next edge
 one_rcv:
 set y, 1                    ; Prepare ISR value
 in y, 1                     ; Shift the one in the ISR
-jmp !x end                  ; Received more than 5 consecutive one exit
+jmp !x end_irq              ; Received more than 5 consecutive one exit
 jmp x-- receive             ; Decrement counter
 
+end_irq:
+irq RX_DATA_DONE
+
 end:
-;Stop state machine
 jmp end
 
 % c-sdk {
@@ -98,7 +101,7 @@ jmp end
     @param clkPin Clock pin
     @param dataPin Data pin
 **/
-static inline void hdlc_rx_program_init(PIO pio, uint sm, uint offset, uint clkPin, uint dataPin) {
+static inline pio_sm_config hdlc_rx_program_init(PIO pio, uint sm, uint offset, uint clkPin, uint dataPin) {
     pio_sm_config c = hdlc_rx_program_get_default_config(offset);
 
     // Only one in pin used for clock
@@ -117,5 +120,6 @@ static inline void hdlc_rx_program_init(PIO pio, uint sm, uint offset, uint clkP
     pio_sm_init(pio, sm, offset, &c);
     // Set the state machine running
     pio_sm_set_enabled(pio, sm, true);
+    return c;
 }
 %}

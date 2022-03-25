@@ -10,14 +10,16 @@
 #define CLK_PIN 1
 #define DATA_PIN 2
 
-PIO rxPIO = pio0;       //PIO block for data receipt
-PIO txPIO = pio1;       //PIO block for data emit
+PIO rxPIO = pio0;           //PIO block for data receipt
+PIO txPIO = pio1;           //PIO block for data emit
 
-uint txClockSM = 0;     //Clock emit state machine number
-uint txDataSM = 0;      //Data emit state machine number
-uint rxFlagSM = 0;      //Flag detection state machine number
-uint rxDataSM = 0;      //Data reception state machine number
-int rxDMAChannel = -1;  //Data reception DMA channel
+uint txClockSM = 0;         //Clock emit state machine number
+uint txDataSM = 0;          //Data emit state machine number
+uint rxFlagSM = 0;          //Flag detection state machine number
+uint rxDataSM = 0;          //Data reception state machine number
+pio_sm_config rxDataSMCfg;
+uint rxDataOffset = 0;
+int rxDMAChannel = -1;      //Data reception DMA channel
 
 static volatile uint8_t rxBuffer[65535];    //Data reception buffer
 static volatile uint32_t rxCount = 0;       //Number of byte(s) transfered with DMA
@@ -33,16 +35,33 @@ void arm_rx_dma();
  * Interrupt 1 is raised if an abort is found
  **/
 void __isr pio0_isr() {
+    //IRQ is raised if a flag is received by HDLC hunter
     if(pio_interrupt_get(rxPIO, 0)){
         pio_interrupt_clear(rxPIO, 0);
+        //int32_t done = sizeof(rxBuffer) - dma_channel_hw_addr(rxDMAChannel)->transfer_count;
         printf("F");
-        /*dma_channel_abort(rxDMAChannel);
-        rxCount = 0;
-        arm_rx_dma();*/
+        /*if(done > 3){
+            dma_channel_abort(rxDMAChannel);
+        }*/
     }
+    //IRQ 1 is raised when an abort is received by HDLC hunter
     if(pio_interrupt_get(rxPIO, 1)){
         pio_interrupt_clear(rxPIO, 1);
         printf("A");
+    }
+    //IRQ 2 is raised when the data RX state machine completed
+    if(pio_interrupt_get(rxPIO, 2)){
+        pio_interrupt_clear(rxPIO, 2);
+        int32_t done = sizeof(rxBuffer) - dma_channel_hw_addr(rxDMAChannel)->transfer_count;
+        if(done < 4){
+            pio_sm_restart(rxPIO, rxDataSM);
+            //Received less than 4 bytes, ignore and restart
+            pio_sm_init(rxPIO, rxDataSM, rxDataOffset, &rxDataSMCfg);
+            // Set the state machine running
+            pio_sm_set_enabled(rxPIO, rxDataSM, true);
+        }else{
+            printf("\nD\n");
+        }   
     }
 }
 
@@ -52,16 +71,16 @@ void __isr pio0_isr() {
 void arm_rx_dma() {
     dma_channel_config c = dma_channel_get_default_config(rxDMAChannel);
     channel_config_set_read_increment(&c, false);
-    channel_config_set_write_increment(&c, false);
+    channel_config_set_write_increment(&c, true);
     channel_config_set_sniff_enable(&c, true);
     channel_config_set_dreq(&c, pio_get_dreq(rxPIO, rxDataSM, false));
     channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
     dma_channel_configure(
         rxDMAChannel,
         &c,
-        rxBuffer + rxCount,                     // Destination pointer
+        rxBuffer,                               // Destination pointer
         (io_rw_8*)&rxPIO->rxf[rxDataSM] + 3,    // Source pointer (get MSB)
-        1,                                      // Number of transfers
+        sizeof(rxBuffer),                       // Number of transfers
         true                                    // Start immediately
     );
 }
@@ -69,9 +88,7 @@ void arm_rx_dma() {
 void __isr dma_isr() {
     if(dma_channel_get_irq1_status(rxDMAChannel)){
         dma_channel_acknowledge_irq1(rxDMAChannel);
-        printf("DMA 0x%02x\n", rxBuffer[rxCount]);
-        ++rxCount;        
-        arm_rx_dma();
+        printf("DMA done!\n");
     }
 }
 
@@ -130,11 +147,12 @@ int main() {
     irq_set_enabled(PIO0_IRQ_0, true);                               //Enable IRQ
     pio_set_irq0_source_enabled(rxPIO, pis_interrupt0, true);        //IRQ0
     pio_set_irq0_source_enabled(rxPIO, pis_interrupt1, true);        //IRQ1
-    
+    pio_set_irq0_source_enabled(rxPIO, pis_interrupt2, true);        //IRQ2
+
     //HDLC RX PIO configuration
-    offset = pio_add_program(rxPIO, &hdlc_rx_program);
+    rxDataOffset = pio_add_program(rxPIO, &hdlc_rx_program);
     rxDataSM = pio_claim_unused_sm(rxPIO, true);
-    hdlc_rx_program_init(rxPIO, rxDataSM, offset, CLK_PIN, DATA_PIN);
+    rxDataSMCfg = hdlc_rx_program_init(rxPIO, rxDataSM, rxDataOffset, CLK_PIN, DATA_PIN);
 
     //HDLC TX clock configuration
     offset = pio_add_program(txPIO, &clock_tx_program);
@@ -157,23 +175,32 @@ int main() {
         sleep_ms(100);
     }
     printf("\n");
+    //Arm DMA to receive data
+    arm_rx_dma();
+    //Send clock without data, it sould send bunches of flags
+    pio_sm_set_enabled(txPIO, txClockSM, true);
+    sleep_ms(1);
+    pio_sm_set_enabled(txPIO, txClockSM, false);
+    while(!pio_sm_is_rx_fifo_empty(rxPIO, rxDataSM)){
+        uint32_t rxByte = pio_sm_get_blocking (rxPIO, rxDataSM);
+        printf("Read : 0x%02lx\n", (rxByte>>24));
+    }
     printf("Sending %u bytes\n", testDataLen);
     add_crc(testData, testDataLen);
     //Push bytes in the TX machine
     for(uint i=0;i<testDataLen+2;++i){
         pio_sm_put_blocking(txPIO, txDataSM, testData[i]);        
     }
-    //arm_rx_dma();
+    
     //Enable the TX clock
     pio_sm_set_enabled(txPIO, txClockSM, true);
     sleep_ms(1);
     pio_sm_set_enabled(txPIO, txClockSM, false);
-    //ARM DMA RX
-    //arm_rx_dma();
-    while(!pio_sm_is_rx_fifo_empty(rxPIO, rxDataSM)){
+    
+    /*while(!pio_sm_is_rx_fifo_empty(rxPIO, rxDataSM)){
         uint32_t rxByte = pio_sm_get_blocking (rxPIO, rxDataSM);
         printf("Read : 0x%02lx\n", (rxByte>>24));
-    }
+    }*/
     //Completed loop
     while(true){        
         sleep_ms(200);
