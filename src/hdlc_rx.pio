@@ -65,6 +65,8 @@ static inline void hdlc_hunter_program_init(PIO pio, uint sm, uint offset, uint 
 
 ; Handle receipt of data
 .program hdlc_rx
+.wrap_target
+mov ISR, NULL               ; Clear ISR to discard data
 ; Wait to receive the first flag
 wait 1 irq RX_FLAG_SM_INT
 restart:
@@ -87,10 +89,8 @@ jmp !x end_irq              ; Received more than 5 consecutive one exit
 jmp x-- receive             ; Decrement counter
 
 end_irq:
-irq RX_DATA_DONE
-
-end:
-jmp end
+irq RX_DATA_DONE            ; Raise an IRQ to signal transfer completed
+.wrap
 
 % c-sdk {
 /**

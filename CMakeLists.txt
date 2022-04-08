@@ -16,6 +16,10 @@ add_executable(picoreseau
     src/picoreseau.cpp
     src/clock_detect.cpp
     src/clock_detect.h
+    src/hdlc_rx.cpp
+    src/hdlc_rx.h
+    src/hdlc_tx.cpp
+    src/hdlc_tx.h
     ${CMAKE_CURRENT_BINARY_DIR}/version.cpp
 )
 
