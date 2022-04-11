@@ -31,14 +31,19 @@ int main() {
     printf("\n");
 
     printf("Enabling TX clock\n");
+    /*setClock(true);
+    sleep_ms(2);
+    setClock(false);*/
     setClock(true);
-    sleep_ms(1);
+    printf("Sending %u bytes", testDataLen);
+    setDataEnabled(true);
+    sleep_ms(2);
+    sendData(testData, testDataLen);
+    setDataEnabled(false);
+    sleep_ms(2);
     setClock(false);
-    //printf("Sending %u bytes", testDataLen);
-    //sendData(testData, testDataLen);
-   
     printf(" done.\n");
-    /*//Starts the receiver
+    //Starts the receiver
     startReceiver();
     printf("Receiver started!\n");
     while(true){
@@ -64,7 +69,7 @@ int main() {
             printf("Aborted!\n");
             break;
         }
-    }*/
+    }
 
     //Completed loop
     while(true){        

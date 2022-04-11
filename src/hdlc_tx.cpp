@@ -9,32 +9,49 @@
 
 #define CLK_PIN 1
 #define DATA_PIN 2
+#define CLK_ENABLE_PIN 3
+
 
 PIO txPIO = pio1;           //PIO block for data emit
-uint txClockEnableSM = 0;   //Clock enabler machine number
 uint txClockSM = 0;         //Clock emit state machine number
 uint txDataSM = 0;          //Data emit state machine number
 
+static volatile bool dataActive = false;
+static volatile bool flagReceived = false;
+
+void __isr pio1_isr()
+{
+    //Interrupt handler when flag is completed
+    //Re-enable the clock if needed
+    gpio_put(CLK_ENABLE_PIN, dataActive);
+    pio_interrupt_clear(txPIO, 0);
+    flagReceived = true;
+}
 
 /**
  * Configures emitter
  **/
 void configureEmitter()
 {
-    //Clock enabler PIO state machine configuration
-    uint offset = pio_add_program(txPIO, &clock_enable_program);
-    txClockEnableSM = pio_claim_unused_sm(txPIO, true);
-    clock_enable_program_init(txPIO, txClockEnableSM, offset);
+    //Clock enable output
+    gpio_init(CLK_ENABLE_PIN);
+    gpio_set_dir(CLK_ENABLE_PIN, GPIO_OUT);
+    gpio_put(CLK_ENABLE_PIN, false); 
 
     //HDLC TX clock configuration
-    offset = pio_add_program(txPIO, &clock_tx_program);
+    uint offset = pio_add_program(txPIO, &clock_tx_program);
     txClockSM = pio_claim_unused_sm(txPIO, true);
     clock_tx_program_init(txPIO, txClockSM, offset, CLK_PIN);
-    
+
     //HDLC TX data configuration
-    /*offset = pio_add_program(txPIO, &hdlc_tx_program);
+    offset = pio_add_program(txPIO, &hdlc_tx_program);
     txDataSM = pio_claim_unused_sm(txPIO, true);
-    hdlc_tx_program_init(txPIO, txDataSM, offset, DATA_PIN);*/
+    hdlc_tx_program_init(txPIO, txDataSM, offset, DATA_PIN, CLK_ENABLE_PIN);
+
+    //Configure interrupts
+    irq_set_exclusive_handler(PIO1_IRQ_0, pio1_isr);                 //Set IRQ handler for flag send
+    irq_set_enabled(PIO1_IRQ_0, true);                               //Enable IRQ
+    pio_set_irq0_source_enabled(txPIO, pis_interrupt0, true);        //IRQ0 (flag sent)*/
 }
 
 /**
@@ -43,7 +60,25 @@ void configureEmitter()
  **/
 void setClock(bool enabled)
 {
-    pio_sm_put_blocking(txPIO, txClockEnableSM, (enabled ? 1 : 0));
+    pio_sm_set_enabled(txPIO, txClockSM, enabled);    
+}
+
+/**
+ * Sets data emiter enabled
+ * @param enabled True if the data emiter is enabled
+ **/
+void setDataEnabled(bool enabled)
+{
+    if(enabled){
+        dataActive = true;
+        gpio_put(CLK_ENABLE_PIN, true);           
+    }else{
+        dataActive = false;
+        flagReceived = false;
+        while(!flagReceived){
+            tight_loop_contents();
+        }        
+    }
 }
 
 /**
@@ -66,8 +101,7 @@ void sendData(const uint8_t* buffer, uint32_t len)
     dma_hw->sniff_ctrl |= 0x800;    //Out inverted (bitwise complement, XOR out)
     dma_hw->sniff_ctrl |= 0x400;    //Out bit-reversed
     dma_hw->sniff_data = 0xFFFF;    //Start with 0xFFFF
-    //Enable clock
-    setClock(true);
+
     //Configure and start DMA
     dma_channel_configure(
         sDMAChannel,
@@ -82,8 +116,6 @@ void sendData(const uint8_t* buffer, uint32_t len)
     //Send CRC
     pio_sm_put_blocking(txPIO, txDataSM, ((dma_hw->sniff_data>>16) & 0xFF));
     pio_sm_put_blocking(txPIO, txDataSM, ((dma_hw->sniff_data>>24) & 0xFF));
-    setClock(false);
-    
     
     
     // setClock(true);

@@ -1,57 +1,15 @@
 ; State machines to emit HDLC encoded data
+.define FLAG_SENT_IRQ 0     ; IRQ when flag is completed
 .define CLK_INTERRUPT 4     ; IRQ number for clock falling edge
-.define CLK_ENABLE_IRQ 5    ; IRQ to enable clock
-.define FLAG_SENT_IRQ 6     ; IRQ when flag is completed 
-
-;Program for enabling/disabling clock when the flag is completed
-.program clock_enable
-set x, 0                    ; Clock disabled by default
-irq clear CLK_ENABLE_IRQ    ; Clear IRQ for clock enabled
-.wrap_target
-check_command:
-pull noblock                ; Gets clock enable order from TX FIFO
-mov osr, x                  ; If TX FIFO is no empty, OSR will be updated
-jmp !x wait_flag            ; Request of disabling clock will wait for flag
-enable_clock:
-; Clock is enabled
-irq set CLK_ENABLE_IRQ      ; Enable clock
-jmp check_command           ; Check next command
-
-wait_flag:
-;Waits for the flag end transmission
-wait 1 irq FLAG_SENT_IRQ
-irq clear CLK_ENABLE_IRQ
-.wrap
-
-% c-sdk {
-/**
-    Initializes the clock_enable PIO program
-    @param pio PIO engine to use
-    @param sm State machine number
-    @param offset State machine program offset
-**/
-static inline void clock_enable_program_init(PIO pio, uint sm, uint offset) {
-    pio_sm_config c = clock_enable_program_get_default_config(offset);
-
-    // Load our configuration, and jump to the start of the program
-    pio_sm_init(pio, sm, offset, &c);
-    // Set the state machine running
-    pio_sm_set_enabled(pio, sm, true);
-}
-%}
-
-
 
 ;Simple program to generate a 500KHz TX clock
 .program clock_tx
 ; Should run at 1Mhz
 .side_set 1
 .wrap_target
-
-wait 0 irq CLK_ENABLE_IRQ side 0    ; Push clock to 0 and wait for clock to be enabled
-nop side 1 [1]                      ; Push clock to 1
-irq CLK_INTERRUPT side 0            ; Push clock to 0 and rise interrupt for hdlc_tx program 
-
+nop side 0
+nop side 1 [1]                  ; Push clock to 1
+irq CLK_INTERRUPT side 0        ; Push clock to 0 and rise interrupt
 .wrap
 
 % c-sdk {
@@ -76,16 +34,19 @@ static inline void clock_tx_program_init(PIO pio, uint sm, uint offset, uint clk
     // Load our configuration, and jump to the start of the program
     pio_sm_init(pio, sm, offset, &c);
     // Set the state machine running
-    pio_sm_set_enabled(pio, sm, true);
+    pio_sm_set_enabled(pio, sm, false);
 }
 %}
 
 ; Program to send data to HDLC bus
 .program hdlc_tx
 .wrap_target
+wait_clock_enable:
+jmp pin send_flag_first_zero   ;Loop if the clock is not enabled
+jmp wait_clock_enable       
 send_flag_first_zero:
 ; Send the flag
-irq FLAG_SENT_IRQ           ; Raise IRQ as we need clock
+irq FLAG_SENT_IRQ           ; Interrupt the MCU to signal the flag is going to output
 wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
 set pins, 0                 ; Sets the pin to 0
 set x, 5                    ; Prepare to send 6 consecutive ones
@@ -100,8 +61,8 @@ wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
 set pins, 0                 ; Sets the pin to 0
 ;Wait for OSR to be filled
 jmp !osre tx_data           ; Jump to tx_data if OSR is not empty
-wait 1 irq FLAG_SENT_IRQ    ; Clear the IRQ to disable clock
-jmp send_flag_first_zero    ; OSR empty send flag again
+; No more data
+jmp wait_clock_enable       ; OSR empty send flag again
 
 tx_data:
 out x, 1                    ; Get one bit from OSR
@@ -133,14 +94,17 @@ jmp !osre tx_data           ; Jump to tx_data if OSR is not empty
     @param offset State machine program offset
     @param dataPin Data pin
 **/
-static inline void hdlc_tx_program_init(PIO pio, uint sm, uint offset, uint dataPin) {
+static inline void hdlc_tx_program_init(PIO pio, uint sm, uint offset, uint dataPin, uint clkEnPin) {
     pio_sm_config c = hdlc_tx_program_get_default_config(offset);
 
     // Only one out pin used for data
     pio_sm_set_consecutive_pindirs(pio, sm, dataPin, 1, true);
     sm_config_set_set_pins(&c, dataPin, 1);
     pio_gpio_init(pio, dataPin);
-    
+
+    //Jump pin is the clock enable pin
+    sm_config_set_jmp_pin(&c, clkEnPin);
+
     //Configure the TX FIFO
     //Join TX and RX FIFO as we only do TX
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);

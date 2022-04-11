@@ -50,7 +50,6 @@ void __isr pio0_isr() {
             //We received enough data for a valid HDLC frame
             rxStatus = check_crc;
         }else if(rxCount > 0){
-            printf("E");
             //Not enough bytes received, re-arm transfer
             startReceiver();
         }
