@@ -23,6 +23,6 @@ void setDataEnabled(bool enabled);
  * @param buffer buffer to be sent, without CRC
  * @param len lenght of the buffer to be sent
  **/
-void sendData(const uint8_t* buffer, uint32_t len);
+void sendData(const uint8_t* buffer, uint len);
 
 #endif

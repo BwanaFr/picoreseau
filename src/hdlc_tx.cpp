@@ -86,7 +86,7 @@ void setDataEnabled(bool enabled)
  * @param buffer buffer to be sent, without CRC
  * @param len lenght of the buffer to be sent
  **/
-void sendData(const uint8_t* buffer, uint32_t len)
+void sendData(const uint8_t* buffer, uint len)
 {
     //Prepare a DMA transfer
     uint8_t sDMAChannel = dma_claim_unused_channel(true);
@@ -94,6 +94,7 @@ void sendData(const uint8_t* buffer, uint32_t len)
     channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
     channel_config_set_read_increment(&c, true);
     channel_config_set_write_increment(&c, false);
+    channel_config_set_dreq(&c, pio_get_dreq(txPIO, txDataSM, true));
     channel_config_set_sniff_enable(&c, true);
 
     // Turn on CRC-16/X-25

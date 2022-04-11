@@ -43,14 +43,15 @@ static inline void clock_tx_program_init(PIO pio, uint sm, uint offset, uint clk
 .wrap_target
 wait_clock_enable:
 jmp pin send_flag_first_zero   ;Loop if the clock is not enabled
-jmp wait_clock_enable       
+jmp wait_clock_enable
+
 send_flag_first_zero:
 ; Send the flag
 irq FLAG_SENT_IRQ           ; Interrupt the MCU to signal the flag is going to output
 wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
 set pins, 0                 ; Sets the pin to 0
 set x, 5                    ; Prepare to send 6 consecutive ones
-set y, 5                    ; Prepare to send no more than 5 ones
+set y, 4                    ; Prepare to send no more than 5 ones
 send_flag_ones:
 wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
 set pins, 1                 ; Sets the pin to 1
@@ -68,21 +69,17 @@ tx_data:
 out x, 1                    ; Get one bit from OSR
 jmp !x tx_zero              ; Jump to tx_zero if we have a 0
 ;Got a one
-jmp y-- tx_one              ; Send a one if not 5 ones in a row
-; Sent 5 consective one, need to send an extra 0
-wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
-set pins, 0                 ; Sets the pin to 0
-set y, 4                    ; Reset one counter to 4 for counting 5 ones (taking into account next 1)
 tx_one:
 wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
 set pins, 1                 ; Sets the pin to 1
-jmp !osre tx_data           ; Jump to tx_data if OSR is not empty
-jmp send_flag_first_zero    ; TX completed, send flag
-
+jmp y-- next_bit            ; Loop again if not send 5 1 in a row
+; 5 consecutive 1 sent, insert a 0
 tx_zero:
 wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
 set pins, 0                 ; Sets the pin to 0
-set y, 5                    ; Reset one counter to 4 for counting 5 ones
+set y, 4                    ; Reset one counter to 4 for counting 5 ones
+
+next_bit:
 jmp !osre tx_data           ; Jump to tx_data if OSR is not empty
 .wrap                       ; TX completed, send flag
 
