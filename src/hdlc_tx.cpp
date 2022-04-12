@@ -17,15 +17,15 @@ uint txClockSM = 0;         //Clock emit state machine number
 uint txDataSM = 0;          //Data emit state machine number
 
 static volatile bool dataActive = false;
-static volatile bool flagReceived = false;
+static volatile bool flagSent = false;
 
 void __isr pio1_isr()
 {
     //Interrupt handler when flag is completed
     //Re-enable the clock if needed
+    flagSent = true;
     gpio_put(CLK_ENABLE_PIN, dataActive);
     pio_interrupt_clear(txPIO, 0);
-    flagReceived = true;
 }
 
 /**
@@ -41,7 +41,7 @@ void configureEmitter()
     //HDLC TX clock configuration
     uint offset = pio_add_program(txPIO, &clock_tx_program);
     txClockSM = pio_claim_unused_sm(txPIO, true);
-    clock_tx_program_init(txPIO, txClockSM, offset, CLK_PIN);
+    clock_tx_program_init(txPIO, txClockSM, offset, CLK_PIN, CLK_ENABLE_PIN);
 
     //HDLC TX data configuration
     offset = pio_add_program(txPIO, &hdlc_tx_program);
@@ -60,24 +60,14 @@ void configureEmitter()
  **/
 void setClock(bool enabled)
 {
-    pio_sm_set_enabled(txPIO, txClockSM, enabled);    
-}
-
-/**
- * Sets data emiter enabled
- * @param enabled True if the data emiter is enabled
- **/
-void setDataEnabled(bool enabled)
-{
     if(enabled){
         dataActive = true;
-        gpio_put(CLK_ENABLE_PIN, true);           
+        gpio_put(CLK_ENABLE_PIN, true); 
     }else{
         dataActive = false;
-        flagReceived = false;
-        while(!flagReceived){
+        while(gpio_get(CLK_ENABLE_PIN)){
             tight_loop_contents();
-        }        
+        }
     }
 }
 
@@ -115,15 +105,14 @@ void sendData(const uint8_t* buffer, uint len)
     dma_channel_wait_for_finish_blocking(sDMAChannel);
     dma_channel_unclaim(sDMAChannel);
     //Send CRC
+    flagSent = false;
     pio_sm_put_blocking(txPIO, txDataSM, ((dma_hw->sniff_data>>16) & 0xFF));
     pio_sm_put_blocking(txPIO, txDataSM, ((dma_hw->sniff_data>>24) & 0xFF));
-    
-    
-    // setClock(true);
-    /*static uint8_t testData[] = {0x00, 0xFF, 0x02, 0x1E, 0x1A};
-    static uint testDataLen = sizeof(testData);
-    for(uint i=0;i<testDataLen;++i){
-        pio_sm_put_blocking(txPIO, txDataSM, testData[i]);        
+    while(!flagSent){
+        tight_loop_contents();
+    }
+    /*flagSent = false;
+    while(!flagSent){
+        tight_loop_contents();
     }*/
-    // setClock(false);
 }

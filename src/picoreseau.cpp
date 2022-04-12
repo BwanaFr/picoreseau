@@ -57,7 +57,7 @@ int main() {
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
     //Start core 1 for receiver
-    multicore_launch_core1(core1_entry);
+    // multicore_launch_core1(core1_entry);
     //Initialize TX state machines
     configureEmitter();
 
@@ -70,13 +70,11 @@ int main() {
         testData2[i] = (uint8_t)i;
     }
     setClock(true);
-    setDataEnabled(true);
-    sleep_ms(2);
+    sleep_ms(1);
     sendData(testData, testDataLen);
-    sleep_ms(2);
+    // sleep_ms(1);
     sendData(testData2, testDataLen2);
-    setDataEnabled(false);
-    sleep_ms(2);
+    sleep_ms(1);
     setClock(false);
     
 

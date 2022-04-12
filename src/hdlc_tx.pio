@@ -7,7 +7,10 @@
 ; Should run at 1Mhz
 .side_set 1
 .wrap_target
-nop side 0
+wait_clock_enable:
+jmp pin enable_clock side 0     ;Loop if the clock is not enabled
+jmp wait_clock_enable side 0
+enable_clock:
 nop side 1 [1]                  ; Push clock to 1
 irq CLK_INTERRUPT side 0        ; Push clock to 0 and rise interrupt
 .wrap
@@ -20,7 +23,7 @@ irq CLK_INTERRUPT side 0        ; Push clock to 0 and rise interrupt
     @param offset State machine program offset
     @param clkPin Clock pin
 **/
-static inline void clock_tx_program_init(PIO pio, uint sm, uint offset, uint clkPin) {
+static inline void clock_tx_program_init(PIO pio, uint sm, uint offset, uint clkPin, uint clkEnPin) {
     pio_sm_config c = clock_tx_program_get_default_config(offset);
 
     // Only one out pin used for clock
@@ -28,13 +31,16 @@ static inline void clock_tx_program_init(PIO pio, uint sm, uint offset, uint clk
     pio_gpio_init(pio, clkPin);
     sm_config_set_sideset_pins(&c, clkPin);
 
-    //Sets the clock divider to have 1Mhz (we are using 2 instructions)
+    //Jump pin is the clock enable pin
+    sm_config_set_jmp_pin(&c, clkEnPin);
+
+    //Sets the clock divider to have 2Mhz (we are using 4 instructions)
     sm_config_set_clkdiv(&c, 62.5f);
 
     // Load our configuration, and jump to the start of the program
     pio_sm_init(pio, sm, offset, &c);
     // Set the state machine running
-    pio_sm_set_enabled(pio, sm, false);
+    pio_sm_set_enabled(pio, sm, true);
 }
 %}
 
