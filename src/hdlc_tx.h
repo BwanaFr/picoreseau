@@ -4,7 +4,7 @@
 /**
  * Configures emitter
  **/
-void configureEmitter();
+void configureEmitter(uint txEnablePin, uint clkTxPin, uint dataTxPin);
 
 /**
  * Send clock on bus used to send echo

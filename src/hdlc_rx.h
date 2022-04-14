@@ -6,7 +6,12 @@ enum receiver_status {idle, in_progress, check_crc, done, crc_error, aborted, er
 /**
  * Configures receiver
  **/
-void configureReceiver();
+void configureReceiver(uint rxEnablePin, uint clkInPin, uint dataInPin);
+
+/**
+ * Enables the transceiver
+ **/
+void enableReceiver(bool enable);
 
 /**
  * Starts the receiver state machine

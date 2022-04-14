@@ -7,11 +7,7 @@
 
 #include <stdio.h>
 
-#define CLK_PIN 1
-#define DATA_PIN 2
-#define CLK_ENABLE_PIN 3
-
-
+uint txEnablePin = 0;
 PIO txPIO = pio1;           //PIO block for data emit
 uint txClockSM = 0;         //Clock emit state machine number
 uint txDataSM = 0;          //Data emit state machine number
@@ -24,29 +20,30 @@ void __isr pio1_isr()
     //Interrupt handler when flag is completed
     //Re-enable the clock if needed
     flagSent = true;
-    gpio_put(CLK_ENABLE_PIN, dataActive);
+    gpio_put(txEnablePin, dataActive);
     pio_interrupt_clear(txPIO, 0);
 }
 
 /**
  * Configures emitter
  **/
-void configureEmitter()
+void configureEmitter(uint txEnPin, uint clkTxPin, uint dataTxPin)
 {
+    txEnablePin = txEnPin;
     //Clock enable output
-    gpio_init(CLK_ENABLE_PIN);
-    gpio_set_dir(CLK_ENABLE_PIN, GPIO_OUT);
-    gpio_put(CLK_ENABLE_PIN, false); 
+    gpio_init(txEnablePin);
+    gpio_set_dir(txEnablePin, GPIO_OUT);
+    gpio_put(txEnablePin, false);
 
     //HDLC TX clock configuration
     uint offset = pio_add_program(txPIO, &clock_tx_program);
     txClockSM = pio_claim_unused_sm(txPIO, true);
-    clock_tx_program_init(txPIO, txClockSM, offset, CLK_PIN, CLK_ENABLE_PIN);
+    clock_tx_program_init(txPIO, txClockSM, offset, clkTxPin, txEnablePin);
 
     //HDLC TX data configuration
     offset = pio_add_program(txPIO, &hdlc_tx_program);
     txDataSM = pio_claim_unused_sm(txPIO, true);
-    hdlc_tx_program_init(txPIO, txDataSM, offset, DATA_PIN, CLK_ENABLE_PIN);
+    hdlc_tx_program_init(txPIO, txDataSM, offset, dataTxPin, txEnPin);
 
     //Configure interrupts
     irq_set_exclusive_handler(PIO1_IRQ_0, pio1_isr);                 //Set IRQ handler for flag send
@@ -62,10 +59,10 @@ void setClock(bool enabled)
 {
     if(enabled){
         dataActive = true;
-        gpio_put(CLK_ENABLE_PIN, true); 
+        gpio_put(txEnablePin, true); 
     }else{
         dataActive = false;
-        while(gpio_get(CLK_ENABLE_PIN)){
+        while(gpio_get(txEnablePin)){
             tight_loop_contents();
         }
     }

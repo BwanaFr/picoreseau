@@ -1,8 +1,7 @@
 ; State machines for receiving HDLC encoded bits
 
-.define RX_FLAG_INT 0       ; IRQ for flag detection
-.define RX_ABORT_INT 1      ; IRQ for abort detection
-.define RX_DATA_DONE 2      ; IRQ for RX data done
+.define RX_ABORT_INT 0      ; IRQ for abort detection
+.define RX_DATA_DONE 1      ; IRQ for RX data done
 .define RX_FLAG_SM_INT 4    ; IRQ for flag detection (internal)
 
 ; Hunts the flag or the abort frame
@@ -25,7 +24,6 @@ irq RX_ABORT_INT            ; Raise an IRQ for abort
 jmp restart                 ; Hunt next flag/abort
 
 flag_rcv:
-irq RX_FLAG_INT             ; Raise IRQ for MCU
 irq RX_FLAG_SM_INT          ; Raise IRQ for internal use
 jmp restart                 ; Hunt next flag/abort
 

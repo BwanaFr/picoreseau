@@ -7,43 +7,94 @@
 
 #include "hdlc_rx.h"
 #include "hdlc_tx.h"
+#include "pico/time.h"
 
+repeating_timer_t timer;
 
-static uint8_t testData[] = {0x0, 0xFF, 0x02};
-static uint testDataLen = sizeof(testData);
+#define CLK_RX_PIN 0                //Clock data in GPIO
+#define RX_TRCV_ENABLE_PIN  1       //Receiver transceiver enable GPIO
+#define CLK_TX_PIN 2                //Clock data out GPIO
+#define TX_TRCV_ENABLE_PIN 3        //Emit transceiver enable GPIO
+#define DATA_RX_PIN 4               //Data in GPIO
+#define DATA_TX_PIN 5               //Data out GPIO
 
-// static uint8_t testData2[] = {0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0XF};
-static uint8_t testData2[16];// = {0xF5, 0xF5, 0xF5, 0xF5,0xF5, 0xF5};
-static uint testDataLen2 = sizeof(testData2);
+bool blink_callback(repeating_timer_t *rt) {
+    gpio_put(PICO_DEFAULT_LED_PIN, !gpio_get(PICO_DEFAULT_LED_PIN));
+    return true;
+}
 
 void core1_entry() {
+    printf("Hello from core 1!\n");
     //Initialize RX state machines
-    configureReceiver();
+    configureReceiver(RX_TRCV_ENABLE_PIN, CLK_RX_PIN, DATA_RX_PIN);
+    enableReceiver(true);
     //Starts the receiver
     while(true){
+        receiver_status status = getReceiverStatus();
         startReceiver();
         while(true){
-            receiver_status status = getReceiverStatus();
-            if(status == done){
-                uint32_t size = 0;
-                const volatile uint8_t* buffer = getRxBuffer(size);
-                for(uint32_t i=0;i<size;++i){
-                    printf("0x%02x ", buffer[i]);
+            receiver_status newStatus = getReceiverStatus();
+            if(status != newStatus){                
+                status = newStatus;
+                bool exit_loop = false;
+                switch(status){
+                    case done:
+                    {
+                        uint32_t size = 0;
+                        const volatile uint8_t* buffer = getRxBuffer(size);
+                        printf("Data :");
+                        for(uint32_t i=0;i<size;++i){
+                            printf("0x%02x ", buffer[i]);
+                        }
+                        printf("\n");
+                        exit_loop = true;
+                        break;
+                    }
+                    case crc_error:
+                    {
+                        printf("BAD CRC! ");
+                        uint32_t size = 0;
+                        const volatile uint8_t* buffer = getRxBuffer(size);
+                        for(uint32_t i=0;i<size;++i){
+                            printf("0x%02x ", buffer[i]);
+                        }
+                        printf("\n");
+                        exit_loop = true;
+                        break;
+                    }
+                    case aborted:
+                    {
+                        printf("Aborted!\n");
+                        exit_loop = true;
+                        break;
+                    }
+                    case in_progress:
+                    {
+                        printf("In progress\n");                        
+                        break;
+                    }
+                    case check_crc:
+                    {
+                        printf("CRC check\n");
+                        break;
+                    }
+                    case error:
+                    {
+                        printf("Error\n");
+                        break;
+                    }
+                    case idle:
+                    {
+                        printf("Idle\n");
+                        break;
+                    }
                 }
-                printf("\n");
-                break;
-            }else if(status == crc_error){
-                printf("BAD CRC!\n");
-                uint32_t size = 0;
-                const volatile uint8_t* buffer = getRxBuffer(size);
-                for(uint32_t i=0;i<size;++i){
-                    printf("0x%02x ", buffer[i]);
+                if(exit_loop){
+                    break;
                 }
-                printf("\n");
-                break;
-            }else if(status == aborted){
-                printf("Aborted!\n");
-                break;
+            }else{
+                tight_loop_contents();
+                sleep_us(2);
             }
         }
     }
@@ -56,8 +107,18 @@ int main() {
     stdio_init_all();
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+    add_repeating_timer_ms(1000, blink_callback, NULL, &timer);
+
+    for(int i=0;i<30;++i){
+        printf(".");
+        sleep_ms(100);
+    }
+    printf("\n");
+    //configureEmitter(TX_TRCV_ENABLE_PIN, CLK_TX_PIN, DATA_TX_PIN);
+    core1_entry();
     //Start core 1 for receiver
-    // multicore_launch_core1(core1_entry);
+    ///multicore_launch_core1(core1_entry);
+    /*
     //Initialize TX state machines
     configureEmitter();
 
@@ -76,7 +137,7 @@ int main() {
     sendData(testData2, testDataLen2);
     sleep_ms(1);
     setClock(false);
-    
+    */
 
     //Completed loop
     while(true){        
