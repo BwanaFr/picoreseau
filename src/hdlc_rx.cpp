@@ -19,30 +19,25 @@ int rxDMAChannel = -1;      //Data reception DMA channel
 uint rxEnablePin = 0;       //Tranceiver TX enable pin
 critical_section_t crit_sec;
 
-static volatile receiver_status rxStatus = idle;
-static volatile uint8_t rxBuffer[65535];    //Data reception buffer
-static volatile uint32_t rxCount = 0;       //Number of byte(s) transfered with DMA
-static volatile uint32_t crc[3] = {0,0,0};  //CRC at current byte, -1 ,2
-
+static volatile receiver_status __not_in_flash("hdlc_rx") rxStatus = idle;
+static volatile uint8_t rxBuffer[65535];                                //Data reception buffer
+static volatile uint32_t __not_in_flash("hdlc_rx") rxCount = 0;         //Number of byte(s) transfered with DMA
+static volatile uint32_t __not_in_flash("hdlc_rx") crc[3] = {0,0,0};    //CRC at current byte, -1 ,2
 
 /**
  * Interrupt service routine on PIO 0
  * Interrupt 0 is raised if an abort is found
  * Interrupt 1 is raised if TX is completed is found
  **/
-void __isr pio0_isr() {
+void __isr __time_critical_func(pio0_isr)() {
     //IRQ 0 is raised when an abort is received by HDLC hunter
     if(pio_interrupt_get(rxPIO, 0)){
         pio_interrupt_clear(rxPIO, 0);
-        critical_section_enter_blocking(&crit_sec);
         //Abort received
         rxStatus = aborted;
-        critical_section_exit(&crit_sec);
     }
     //IRQ 1 is raised when the data RX state machine completed
     if(pio_interrupt_get(rxPIO, 1)){
-        pio_interrupt_clear(rxPIO, 1);
-        critical_section_enter_blocking(&crit_sec);
         //Data received, ignore is we receive less than 4 bytes
         //HDLC frame is at least 4 bytes (address, control + 2 crc bytes)
         if(rxCount > 4){
@@ -50,30 +45,28 @@ void __isr pio0_isr() {
             rxStatus = check_crc;
         }else if(rxCount > 0){
             //Not enough bytes received, re-arm transfer
-            startReceiver();
+            rxCount = 0;                    //Restart rx count
+            dma_hw->sniff_data = 0xFFFF;    //Restart CRC
+            dma_channel_set_write_addr(rxDMAChannel, rxBuffer, true);   //Start DMA transfer
         }
-        critical_section_exit(&crit_sec);
+        pio_interrupt_clear(rxPIO, 1);
     }
 }
 
 /**
  * Interrupt when RX DMA transfer is completed
  **/
-void __isr rx_dma_isr() {
+void __isr __time_critical_func(rx_dma_isr)() {
     if(dma_channel_get_irq1_status(rxDMAChannel)){
         dma_channel_acknowledge_irq1(rxDMAChannel);
-        critical_section_enter_blocking(&crit_sec);        
-        if(rxStatus == in_progress){
-            //Keep latest 2 CRC
-            crc[2] = crc[1];
-            crc[1] = crc[0];
-            crc[0] = dma_hw->sniff_data;
-            //Increment rx count
-            ++rxCount;
-            //Start another transfer
-            dma_channel_start(rxDMAChannel);
-        }
-        critical_section_exit(&crit_sec);
+        //Keep latest 2 CRC
+        crc[2] = crc[1];
+        crc[1] = crc[0];
+        crc[0] = dma_hw->sniff_data;
+        //Increment rx count
+        ++rxCount;
+        //Start another transfer
+        dma_channel_start(rxDMAChannel);
     }
 }
 
@@ -111,7 +104,7 @@ void configureRXDMA() {
 
 void enableReceiver(bool enable)
 {
-    gpio_put(rxEnablePin, !enable);    //Disable RX for now
+    gpio_put(rxEnablePin, !enable);
 }
 
 /**
@@ -134,11 +127,10 @@ void configureReceiver(uint rxEnPin, uint clkInPin, uint dataInPin)
     hdlc_hunter_program_init(rxPIO, rxFlagSM, offset, clkInPin, dataInPin);
     irq_set_exclusive_handler(PIO0_IRQ_0, pio0_isr);                 //Set IRQ handler for new command
     irq_set_enabled(PIO0_IRQ_0, true);                               //Enable IRQ
-    
     //HDLC RX PIO configuration
     rxDataOffset = pio_add_program(rxPIO, &hdlc_rx_program);
     rxDataSM = pio_claim_unused_sm(rxPIO, true);
-    rxDataSMCfg = hdlc_rx_program_init(rxPIO, rxDataSM, rxDataOffset, clkInPin, dataInPin);
+    rxDataSMCfg = hdlc_rx_program_init(rxPIO, rxDataSM, rxDataOffset, dataInPin);
     pio_set_irq0_source_enabled(rxPIO, pis_interrupt0, true);        //IRQ0 (abort received)
     pio_set_irq0_source_enabled(rxPIO, pis_interrupt1, true);        //IRQ1 (TX completed)
 
@@ -149,15 +141,14 @@ void configureReceiver(uint rxEnPin, uint clkInPin, uint dataInPin)
 /**
  * Starts the receiver state machine
  **/
-void startReceiver()
+void __time_critical_func(startReceiver)()
 {
-    //critical_section_enter_blocking(&crit_sec);
+    critical_section_enter_blocking(&crit_sec);
     rxCount = 0;                    //Restart rx count
     dma_hw->sniff_data = 0xFFFF;    //Restart CRC
     rxStatus = in_progress;
-    dma_channel_abort(rxDMAChannel);
     dma_channel_set_write_addr(rxDMAChannel, rxBuffer, true);   //Start DMA transfer
-    //critical_section_exit(&crit_sec);
+    critical_section_exit(&crit_sec);
 }
 
 /**
@@ -166,20 +157,21 @@ void startReceiver()
  **/
 receiver_status getReceiverStatus()
 {
+    critical_section_enter_blocking(&crit_sec);
     if(rxStatus == check_crc){
-        critical_section_enter_blocking(&crit_sec);
         uint32_t crcCheck = crc[2];
         if((((crcCheck>>16) & 0xFF) == rxBuffer[rxCount-2]) &&
             (((crcCheck>>24) & 0xFF) == rxBuffer[rxCount-1])){
                 rxStatus = done;
-        }else{
+        }else{            
             rxStatus = crc_error;
         }
-        critical_section_exit(&crit_sec);
     }else if(rxStatus == aborted){
         dma_channel_abort(rxDMAChannel);
     }
-    return rxStatus;
+    receiver_status ret = rxStatus;
+    critical_section_exit(&crit_sec);
+    return ret;
 }
 
 /**

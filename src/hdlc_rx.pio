@@ -64,30 +64,29 @@ static inline void hdlc_hunter_program_init(PIO pio, uint sm, uint offset, uint 
 ; Handle receipt of data
 .program hdlc_rx
 .wrap_target
+in x, 8                  ; Shift the one in the ISR
+start:
 mov ISR, NULL               ; Clear ISR to discard data
+irq RX_DATA_DONE            ; Raise an IRQ to signal transfer start/stop
 ; Wait to receive the first flag
 wait 1 irq RX_FLAG_SM_INT
 restart:
 set x, 5                    ; Expect to have a 0 after 5 consecutive ones
 
 receive:
-wait 0 pin 0
-wait 1 pin 0                ; Waits for clock rising edge
+wait 0 pin 1
+wait 1 pin 1                ; Waits for clock rising edge
 jmp pin one_rcv             ; Goto one_rcv if the bit is one
 ; We received a 0
 jmp !x restart              ; Received 5 consecutive 0 don't update ISR
-set y, 0                    ; Prepare ISR value
-in y, 1                     ; Shift the zero in the ISR
+in pins, 1                  ; Shift the zero in the ISR
 jmp restart                 ; Reset counter and wait for next edge
 
 one_rcv:
-set y, 1                    ; Prepare ISR value
-in y, 1                     ; Shift the one in the ISR
-jmp !x end_irq              ; Received more than 5 consecutive one exit
+in pins, 1                  ; Shift the one in the ISR
+jmp !x start                ; Received more than 5 consecutive one, transfer completed
 jmp x-- receive             ; Decrement counter
 
-end_irq:
-irq RX_DATA_DONE            ; Raise an IRQ to signal transfer completed
 .wrap
 
 % c-sdk {
@@ -96,16 +95,15 @@ irq RX_DATA_DONE            ; Raise an IRQ to signal transfer completed
     @param pio PIO engine to use
     @param sm State machine number
     @param offset State machine program offset
-    @param clkPin Clock pin
     @param dataPin Data pin
 **/
-static inline pio_sm_config hdlc_rx_program_init(PIO pio, uint sm, uint offset, uint clkPin, uint dataPin) {
+static inline pio_sm_config hdlc_rx_program_init(PIO pio, uint sm, uint offset, uint dataPin) {
     pio_sm_config c = hdlc_rx_program_get_default_config(offset);
 
-    // Only one in pin used for clock
-    pio_sm_set_consecutive_pindirs(pio, sm, clkPin, 1, false);
-    sm_config_set_in_pins(&c, clkPin);
-    // Jump pin is the same as in pin
+    // First pin is the data, second is clock
+    pio_sm_set_consecutive_pindirs(pio, sm, dataPin, 2, false);
+    sm_config_set_in_pins(&c, dataPin);
+    // Jump pin is the same as data pin
     sm_config_set_jmp_pin(&c, dataPin);
 
     //Configure the RX FIFO

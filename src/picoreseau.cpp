@@ -11,12 +11,17 @@
 
 repeating_timer_t timer;
 
-#define CLK_RX_PIN 0                //Clock data in GPIO
+/*#define CLK_RX_PIN 0                //Clock data in GPIO
 #define RX_TRCV_ENABLE_PIN  1       //Receiver transceiver enable GPIO
 #define CLK_TX_PIN 2                //Clock data out GPIO
 #define TX_TRCV_ENABLE_PIN 3        //Emit transceiver enable GPIO
 #define DATA_RX_PIN 4               //Data in GPIO
-#define DATA_TX_PIN 5               //Data out GPIO
+#define DATA_TX_PIN 5               //Data out GPIO*/
+
+#define DATA_RX_PIN 0
+#define CLK_RX_PIN 1
+#define RX_TRCV_ENABLE_PIN  2       //Receiver transceiver enable GPIO
+
 
 bool blink_callback(repeating_timer_t *rt) {
     gpio_put(PICO_DEFAULT_LED_PIN, !gpio_get(PICO_DEFAULT_LED_PIN));
@@ -68,11 +73,6 @@ void core1_entry() {
                         exit_loop = true;
                         break;
                     }
-                    case in_progress:
-                    {
-                        printf("In progress\n");                        
-                        break;
-                    }
                     case check_crc:
                     {
                         printf("CRC check\n");
@@ -94,7 +94,6 @@ void core1_entry() {
                 }
             }else{
                 tight_loop_contents();
-                sleep_us(2);
             }
         }
     }
