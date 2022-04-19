@@ -10,7 +10,7 @@
 #include <stdio.h>
 
 PIO rxPIO = pio0;           //PIO block for data receipt
-uint rxFlagSM = 0;          //Flag detection state machine number
+//uint rxFlagSM = 0;          //Flag detection state machine number
 uint rxDataSM = 0;          //Data reception state machine number
 pio_sm_config rxDataSMCfg;
 uint rxDataOffset = 0;
@@ -19,10 +19,17 @@ int rxDMAChannel = -1;      //Data reception DMA channel
 uint rxEnablePin = 0;       //Tranceiver TX enable pin
 critical_section_t crit_sec;
 
-static volatile receiver_status __not_in_flash("hdlc_rx") rxStatus = idle;
-static volatile uint8_t rxBuffer[65535];                                //Data reception buffer
-static volatile uint32_t __not_in_flash("hdlc_rx") rxCount = 0;         //Number of byte(s) transfered with DMA
-static volatile uint32_t __not_in_flash("hdlc_rx") crc[3] = {0,0,0};    //CRC at current byte, -1 ,2
+typedef struct RXBuffer {
+    uint8_t buffer[65535];
+    uint32_t rxCount = 0;
+    uint32_t crc[3];
+}RXBuffer;
+
+static volatile RXBuffer __not_in_flash("hdlc_rx") buffers[2];
+static volatile uint32_t currentBuffer = 0;
+
+static volatile bool rxCompleted = false;
+static volatile bool rxAborted = false;
 
 /**
  * Interrupt service routine on PIO 0
@@ -30,26 +37,25 @@ static volatile uint32_t __not_in_flash("hdlc_rx") crc[3] = {0,0,0};    //CRC at
  * Interrupt 1 is raised if TX is completed is found
  **/
 void __isr __time_critical_func(pio0_isr)() {
-    //IRQ 0 is raised when an abort is received by HDLC hunter
+    //IRQ 0 is raised when a HDLC abort is received
     if(pio_interrupt_get(rxPIO, 0)){
         pio_interrupt_clear(rxPIO, 0);
         //Abort received
-        rxStatus = aborted;
+        rxAborted = true;
     }
-    //IRQ 1 is raised when the data RX state machine completed
+    //IRQ 1 is raised when a HDLC flag is recieved
     if(pio_interrupt_get(rxPIO, 1)){
-        //Data received, ignore is we receive less than 4 bytes
-        //HDLC frame is at least 4 bytes (address, control + 2 crc bytes)
-        if(rxCount > 4){
-            //We received enough data for a valid HDLC frame
-            rxStatus = check_crc;
-        }else if(rxCount > 0){
-            //Not enough bytes received, re-arm transfer
-            rxCount = 0;                    //Restart rx count
-            dma_hw->sniff_data = 0xFFFF;    //Restart CRC
-            dma_channel_set_write_addr(rxDMAChannel, rxBuffer, true);   //Start DMA transfer
-        }
         pio_interrupt_clear(rxPIO, 1);
+        //Disable this IRQ (one shot IRQ)
+        pio_set_irq0_source_enabled(rxPIO, pis_interrupt1, false);
+        if(buffers[currentBuffer].rxCount > 0){
+            rxCompleted = true;
+            //Got some bytes, swap buffer and start DMA
+            currentBuffer = (!currentBuffer) & 0x1;
+            buffers[currentBuffer].rxCount = 0;
+            dma_hw->sniff_data = 0xFFFF;    //Start with 0xFFFF
+            dma_channel_set_write_addr(rxDMAChannel, buffers[currentBuffer].buffer, true);   //Start DMA transfer
+        }
     }
 }
 
@@ -59,12 +65,18 @@ void __isr __time_critical_func(pio0_isr)() {
 void __isr __time_critical_func(rx_dma_isr)() {
     if(dma_channel_get_irq1_status(rxDMAChannel)){
         dma_channel_acknowledge_irq1(rxDMAChannel);
+        if(buffers[currentBuffer].rxCount == 0){
+            //Enable the PIO interrupt 0 to get notified when transfer is done
+            pio_interrupt_clear(rxPIO, 1);
+            pio_set_irq0_source_enabled(rxPIO, pis_interrupt1, true);
+        }
+
         //Keep latest 2 CRC
-        crc[2] = crc[1];
-        crc[1] = crc[0];
-        crc[0] = dma_hw->sniff_data;
+        buffers[currentBuffer].crc[2] = buffers[currentBuffer].crc[1];
+        buffers[currentBuffer].crc[1] = buffers[currentBuffer].crc[0];
+        buffers[currentBuffer].crc[0] = dma_hw->sniff_data;
         //Increment rx count
-        ++rxCount;
+        ++buffers[currentBuffer].rxCount;        
         //Start another transfer
         dma_channel_start(rxDMAChannel);
     }
@@ -95,7 +107,7 @@ void configureRXDMA() {
     dma_channel_configure(
         rxDMAChannel,
         &c,
-        rxBuffer,                               // Destination pointer
+        buffers[currentBuffer].buffer,          // Destination pointer
         (io_rw_8*)&rxPIO->rxf[rxDataSM] + 3,    // Source pointer (get MSB)
         1,                                      // Number of transfers (one by one)
         false                                   // Don't start immediately
@@ -121,10 +133,6 @@ void configureReceiver(uint rxEnPin, uint clkInPin, uint dataInPin)
     critical_section_init(&crit_sec);
 
     //HDLC flag hunter PIO configuration
-    uint offset = 0;
-    offset = pio_add_program(rxPIO, &hdlc_hunter_program);
-    rxFlagSM = pio_claim_unused_sm(rxPIO, true);
-    hdlc_hunter_program_init(rxPIO, rxFlagSM, offset, clkInPin, dataInPin);
     irq_set_exclusive_handler(PIO0_IRQ_0, pio0_isr);                 //Set IRQ handler for new command
     irq_set_enabled(PIO0_IRQ_0, true);                               //Enable IRQ
     //HDLC RX PIO configuration
@@ -132,7 +140,7 @@ void configureReceiver(uint rxEnPin, uint clkInPin, uint dataInPin)
     rxDataSM = pio_claim_unused_sm(rxPIO, true);
     rxDataSMCfg = hdlc_rx_program_init(rxPIO, rxDataSM, rxDataOffset, dataInPin);
     pio_set_irq0_source_enabled(rxPIO, pis_interrupt0, true);        //IRQ0 (abort received)
-    pio_set_irq0_source_enabled(rxPIO, pis_interrupt1, true);        //IRQ1 (TX completed)
+    pio_set_irq0_source_enabled(rxPIO, pis_interrupt1, false);       //IRQ1 (TX completed)
 
     //Configure DMA channel to receive bytes
     configureRXDMA();
@@ -144,10 +152,9 @@ void configureReceiver(uint rxEnPin, uint clkInPin, uint dataInPin)
 void __time_critical_func(startReceiver)()
 {
     critical_section_enter_blocking(&crit_sec);
-    rxCount = 0;                    //Restart rx count
-    dma_hw->sniff_data = 0xFFFF;    //Restart CRC
-    rxStatus = in_progress;
-    dma_channel_set_write_addr(rxDMAChannel, rxBuffer, true);   //Start DMA transfer
+    buffers[currentBuffer].rxCount = 0;         //Restart rx count
+    dma_hw->sniff_data = 0xFFFF;                //Restart CRC
+    dma_channel_set_write_addr(rxDMAChannel, buffers[currentBuffer].buffer, true);   //Start DMA transfer
     critical_section_exit(&crit_sec);
 }
 
@@ -156,21 +163,30 @@ void __time_critical_func(startReceiver)()
  * @return status as defined in RX_ symbols
  **/
 receiver_status getReceiverStatus()
-{
+{   
+    receiver_status ret = in_progress;
+    uint32_t previousBuffer = 0;
+    bool rxDone = false;
     critical_section_enter_blocking(&crit_sec);
-    if(rxStatus == check_crc){
-        uint32_t crcCheck = crc[2];
-        if((((crcCheck>>16) & 0xFF) == rxBuffer[rxCount-2]) &&
-            (((crcCheck>>24) & 0xFF) == rxBuffer[rxCount-1])){
-                rxStatus = done;
-        }else{            
-            rxStatus = crc_error;
-        }
-    }else if(rxStatus == aborted){
-        dma_channel_abort(rxDMAChannel);
-    }
-    receiver_status ret = rxStatus;
+    previousBuffer = !currentBuffer & 0x1;
+    rxDone = rxCompleted;
+    rxCompleted = false;
     critical_section_exit(&crit_sec);
+
+    if(rxDone){
+        //Data received, ignore is we receive less than 4 bytes
+        //HDLC frame is at least 4 bytes (address, control + 2 crc bytes)       
+        if(buffers[previousBuffer].rxCount > 4){
+            //We received enough data for a valid HDLC frame
+            uint32_t crcCheck = buffers[previousBuffer].crc[2];
+            if((((crcCheck>>16) & 0xFF) == buffers[previousBuffer].buffer[buffers[previousBuffer].rxCount-2]) &&
+                (((crcCheck>>24) & 0xFF) == buffers[previousBuffer].buffer[buffers[previousBuffer].rxCount-1])){
+                    ret = done;
+            }else{            
+                ret = crc_error;
+            }
+        }
+    }
     return ret;
 }
 
@@ -181,6 +197,10 @@ receiver_status getReceiverStatus()
  **/
 const volatile uint8_t* getRxBuffer(uint32_t& len)
 {
-    len = rxCount;
-    return rxBuffer;
+    uint32_t previousBuffer = 0;
+    critical_section_enter_blocking(&crit_sec);
+    previousBuffer = !currentBuffer & 0x1;
+    critical_section_exit(&crit_sec);
+    len = buffers[previousBuffer].rxCount;
+    return buffers[previousBuffer].buffer;
 }

@@ -34,9 +34,9 @@ void core1_entry() {
     configureReceiver(RX_TRCV_ENABLE_PIN, CLK_RX_PIN, DATA_RX_PIN);
     enableReceiver(true);
     //Starts the receiver
+    startReceiver();
     while(true){
         receiver_status status = getReceiverStatus();
-        startReceiver();
         while(true){
             receiver_status newStatus = getReceiverStatus();
             if(status != newStatus){                
