@@ -10,7 +10,6 @@
 #include <stdio.h>
 
 PIO rxPIO = pio0;           //PIO block for data receipt
-//uint rxFlagSM = 0;          //Flag detection state machine number
 uint rxDataSM = 0;          //Data reception state machine number
 pio_sm_config rxDataSMCfg;
 uint rxDataOffset = 0;

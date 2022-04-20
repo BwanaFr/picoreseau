@@ -7,6 +7,7 @@
 
 #include "hdlc_rx.h"
 #include "hdlc_tx.h"
+#include "clock_detect.h"
 #include "pico/time.h"
 
 repeating_timer_t timer;
@@ -30,6 +31,7 @@ bool blink_callback(repeating_timer_t *rt) {
 
 void core1_entry() {
     printf("Hello from core 1!\n");
+    initialize_clock_detect();
     //Initialize RX state machines
     configureReceiver(RX_TRCV_ENABLE_PIN, CLK_RX_PIN, DATA_RX_PIN);
     enableReceiver(true);
@@ -39,7 +41,7 @@ void core1_entry() {
         receiver_status status = getReceiverStatus();
         while(true){
             receiver_status newStatus = getReceiverStatus();
-            if(status != newStatus){                
+            if(status != newStatus){
                 status = newStatus;
                 bool exit_loop = false;
                 switch(status){
@@ -106,7 +108,7 @@ int main() {
     stdio_init_all();
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
-    add_repeating_timer_ms(1000, blink_callback, NULL, &timer);
+    // add_repeating_timer_ms(1000, blink_callback, NULL, &timer);
 
     for(int i=0;i<30;++i){
         printf(".");

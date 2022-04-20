@@ -19,6 +19,7 @@ bool clk_presence_timer_callback(repeating_timer_t *rt) {
     uint16_t counts = pwm_get_counter(slice_num);
     clock_detected = ((counts > (CLK_TEST_CYCLES-3)) && (counts < (CLK_TEST_CYCLES+3)));
     pwm_set_counter(slice_num, 0);
+    gpio_put(PICO_DEFAULT_LED_PIN, clock_detected);
     //Clock is detected if we count about 10 edges
     return true;
 }
