@@ -10,12 +10,10 @@
 .wrap_target
 begin:
 mov ISR, NULL               ; Clear ISR to discard datas
-set y, 7                    ; Flush ISR when 8 bits are received
 restart:
 set x, 7                    ; Number of received one counter (7>= means abort)
 
 receive:
-mov osr, y                  ; Save the current number of shifted bits in OSR
 wait 0 pin 1
 wait 1 pin 1                ; Waits for clock rising edge
 jmp pin one_rcv             ; Goto one_rcv if the bit is one
@@ -23,7 +21,6 @@ jmp pin one_rcv             ; Goto one_rcv if the bit is one
 check_zero_insert:
 set y, 2                    ; If x is 2, we received 5 consecutive one
 jmp x!=y check_flag         ; X is not 2, check flag
-mov y, osr                  ; Restore number of shifted bits
 jmp restart                 ; Received 5 consecutive 1 don't update ISR (inserted 0)
 
 check_flag:
@@ -50,10 +47,7 @@ set y, 1                    ; If x is 1, we received 6 consecutive one (flag)
 jmp x!=y shift_bit          ; X is not 1, no flag, bit valid
 jmp receive
 shift_bit:
-mov y, osr                  ; Restore number of shifted bits
-jmp y-- receive             ; If y > 0, not all bits are shifted
-set y, 7                    ; Flush ISR when 8 bits are received
-push                        ; Send ISR to RX FIFO
+push iffull                 ; Send ISR to RX FIFO (if 8 bits are shifted)
 jmp receive
 
 done:
