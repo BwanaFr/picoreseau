@@ -1,7 +1,7 @@
 #ifndef __HDLC_RX_H__
 #include "pico/stdlib.h"
 
-enum receiver_status {idle, in_progress, check_crc, done, crc_error, aborted, error};
+enum receiver_status {busy, done, timeout, bad_crc};
 
 /**
  * Configures receiver
@@ -9,26 +9,14 @@ enum receiver_status {idle, in_progress, check_crc, done, crc_error, aborted, er
 void configureReceiver(uint rxEnablePin, uint clkInPin, uint dataInPin);
 
 /**
- * Enables the transceiver
+ * Receives data, blocks until done
+ * @param address Receiver address
+ * @param buffer Buffer to store data
+ * @param bulLen Maximum length of buffer
+ * @param rcvLen Effective bytes received
+ * @return receiver_status Status of the receiver
  **/
-void enableReceiver(bool enable);
+receiver_status receiveData(uint8_t address, uint8_t* buffer, uint32_t bufLen, uint32_t& rcvLen);
 
-/**
- * Starts the receiver state machine
- **/
-void startReceiver();
-
-/**
- * Gets receiver status
- * @return status as defined in receiver_status
- **/
-receiver_status getReceiverStatus();
-
-/**
- * Gets the RX buffer
- * @param len Lenght of the buffer
- * @return Pointer to buffer or NULL
- **/
-const volatile uint8_t* getRxBuffer(uint32_t& len);
 
 #endif

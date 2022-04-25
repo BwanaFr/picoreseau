@@ -47,7 +47,7 @@ set y, 1                    ; If x is 1, we received 6 consecutive one (flag)
 jmp x!=y shift_bit          ; X is not 1, no flag, bit valid
 jmp receive
 shift_bit:
-push iffull                 ; Send ISR to RX FIFO (if 8 bits are shifted)
+push iffull noblock         ; Send ISR to RX FIFO (if 8 bits are shifted)
 jmp receive
 
 done:

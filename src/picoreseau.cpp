@@ -23,83 +23,13 @@ repeating_timer_t timer;
 #define CLK_RX_PIN 1
 #define RX_TRCV_ENABLE_PIN  2       //Receiver transceiver enable GPIO
 
+uint8_t buffer[65535];
 
 bool blink_callback(repeating_timer_t *rt) {
     gpio_put(PICO_DEFAULT_LED_PIN, !gpio_get(PICO_DEFAULT_LED_PIN));
     return true;
 }
 
-void core1_entry() {
-    printf("Hello from core 1!\n");
-    initialize_clock_detect();
-    //Initialize RX state machines
-    configureReceiver(RX_TRCV_ENABLE_PIN, CLK_RX_PIN, DATA_RX_PIN);
-    enableReceiver(true);
-    //Starts the receiver
-    startReceiver();
-    while(true){
-        receiver_status status = getReceiverStatus();
-        while(true){
-            receiver_status newStatus = getReceiverStatus();
-            if(status != newStatus){
-                status = newStatus;
-                bool exit_loop = false;
-                switch(status){
-                    case done:
-                    {
-                        uint32_t size = 0;
-                        const volatile uint8_t* buffer = getRxBuffer(size);
-                        printf("Data :");
-                        for(uint32_t i=0;i<size;++i){
-                            printf("0x%02x ", buffer[i]);
-                        }
-                        printf("\n");
-                        exit_loop = true;
-                        break;
-                    }
-                    case crc_error:
-                    {
-                        printf("BAD CRC! ");
-                        uint32_t size = 0;
-                        const volatile uint8_t* buffer = getRxBuffer(size);
-                        for(uint32_t i=0;i<size;++i){
-                            printf("0x%02x ", buffer[i]);
-                        }
-                        printf("\n");
-                        exit_loop = true;
-                        break;
-                    }
-                    case aborted:
-                    {
-                        printf("Aborted!\n");
-                        exit_loop = true;
-                        break;
-                    }
-                    case check_crc:
-                    {
-                        printf("CRC check\n");
-                        break;
-                    }
-                    case error:
-                    {
-                        printf("Error\n");
-                        break;
-                    }
-                    case idle:
-                    {
-                        printf("Idle\n");
-                        break;
-                    }
-                }
-                if(exit_loop){
-                    break;
-                }
-            }else{
-                tight_loop_contents();
-            }
-        }
-    }
-}
 
 /**
  * Application main entry
@@ -115,10 +45,26 @@ int main() {
         sleep_ms(100);
     }
     printf("\n");
+
+
+    //Initialize RX state machines
+    configureReceiver(RX_TRCV_ENABLE_PIN, CLK_RX_PIN, DATA_RX_PIN);
+    while(true){
+        uint32_t nbBytes = 0;
+        receiver_status status = receiveData(0x11, buffer, sizeof(buffer), nbBytes);
+        if(status == done){
+            printf("Received :");
+            for(uint32_t i=0;i<nbBytes;++i){
+                printf("0x%02x ", buffer[i]);
+            }
+            printf("\n");
+        }else if(status == bad_crc){
+            printf("BAD CRC\n");
+        }
+    }
+
     //configureEmitter(TX_TRCV_ENABLE_PIN, CLK_TX_PIN, DATA_TX_PIN);
-    core1_entry();
-    //Start core 1 for receiver
-    ///multicore_launch_core1(core1_entry);
+    
     /*
     //Initialize TX state machines
     configureEmitter();
