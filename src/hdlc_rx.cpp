@@ -150,8 +150,6 @@ void configureReceiver(uint rxEnPin, uint clkInPin, uint dataInPin)
     gpio_init(rxEnablePin);
     gpio_set_dir(rxEnablePin, GPIO_OUT);
     enableReceiver(false);    //Disable RX for now
-    //Initialize critical section
-    critical_section_init(&crit_sec);
 
     //HDLC flag hunter PIO configuration
     irq_set_exclusive_handler(PIO0_IRQ_0, pio0_isr);                 //Set IRQ handler for new command
