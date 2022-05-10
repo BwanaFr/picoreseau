@@ -51,11 +51,11 @@ push iffull noblock         ; Send ISR to RX FIFO (if 8 bits are shifted)
 jmp receive
 
 done:
-irq RX_DATA_DONE            ; Raise an IRQ to signal transfer start/stop
+irq nowait RX_DATA_DONE            ; Raise an IRQ to signal transfer start/stop
 jmp begin
 
 abort:
-irq RX_ABORT_INT            ; Raise an IRQ to signal transfer abort
+irq nowait RX_ABORT_INT            ; Raise an IRQ to signal transfer abort
 
 .wrap
 
