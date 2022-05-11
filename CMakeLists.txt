@@ -15,11 +15,8 @@ pico_sdk_init()
 add_executable(picoreseau
     src/picoreseau.cpp
     src/clock_detect.cpp
-    src/clock_detect.h
     src/hdlc_rx.cpp
-    src/hdlc_rx.h
     src/hdlc_tx.cpp
-    src/hdlc_tx.h
     ${CMAKE_CURRENT_BINARY_DIR}/version.cpp
 )
 
@@ -33,6 +30,8 @@ message(STATUS "CMAKE_CURRENT_BINARY_DIR = ${CMAKE_CURRENT_BINARY_DIR}")
 # Generate pio headers
 pico_generate_pio_header(picoreseau ${CMAKE_CURRENT_LIST_DIR}/src/hdlc_rx.pio)
 pico_generate_pio_header(picoreseau ${CMAKE_CURRENT_LIST_DIR}/src/hdlc_tx.pio)
+
+target_include_directories(picoreseau PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # Add the standard library to the build
 target_link_libraries(picoreseau pico_stdlib pico_multicore pico_sync hardware_pio hardware_pwm hardware_dma)

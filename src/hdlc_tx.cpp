@@ -30,7 +30,7 @@ void __isr pio1_isr()
 void configureEmitter(uint txEnPin, uint clkTxPin, uint dataTxPin)
 {
     txEnablePin = txEnPin;
-    //Clock enable output
+    //TX enable output
     gpio_init(txEnablePin);
     gpio_set_dir(txEnablePin, GPIO_OUT);
     gpio_put(txEnablePin, false);
@@ -108,6 +108,7 @@ void sendData(const uint8_t* buffer, uint len)
     while(!flagSent){
         tight_loop_contents();
     }
+    dma_sniffer_disable();
     /*flagSent = false;
     while(!flagSent){
         tight_loop_contents();

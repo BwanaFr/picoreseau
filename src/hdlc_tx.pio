@@ -53,7 +53,6 @@ jmp wait_clock_enable
 
 send_flag_first_zero:
 ; Send the flag
-irq FLAG_SENT_IRQ           ; Interrupt the MCU to signal the flag is going to output
 wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
 set pins, 0                 ; Sets the pin to 0
 set x, 5                    ; Prepare to send 6 consecutive ones
@@ -66,6 +65,7 @@ send_flag_last_zero:
 ;Send the remaining 0
 wait 1 irq CLK_INTERRUPT    ; Waits for the clock to be low
 set pins, 0                 ; Sets the pin to 0
+irq nowait FLAG_SENT_IRQ    ; Interrupt the MCU to signal the flag is going to output
 ;Wait for OSR to be filled
 jmp !osre tx_data           ; Jump to tx_data if OSR is not empty
 ; No more data

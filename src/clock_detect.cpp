@@ -4,9 +4,11 @@
 
 #include <stdio.h>
 #include "pico/stdlib.h"
+#include "hdlc_rx.h"
 
 #define CLK_IN_PIN 1
 #define CLK_TEST_CYCLES 10
+#define CLK_FREQ 500
 
 static repeating_timer_t timer;
 static uint slice_num = 0;
@@ -35,10 +37,18 @@ void initialize_clock_detect() {
 
     //We expect to have a clock frequency of 500KHz
     //Counting 10 edges is enough to know the frequency
-    add_repeating_timer_us((-1000 / (500/CLK_TEST_CYCLES)), clk_presence_timer_callback, NULL, &timer);
+    add_repeating_timer_us((-1000 / (CLK_FREQ/CLK_TEST_CYCLES)), clk_presence_timer_callback, NULL, &timer);
     pwm_set_enabled(slice_num, true);
 }
 
-bool is_clock_detected() {
+bool is_clock_detected(bool fast) {
+    if(fast){
+        cancel_repeating_timer(&timer);
+        pwm_set_counter(slice_num, 0);
+        sleep_us(1000/(CLK_FREQ/2));
+        bool ret =  pwm_get_counter(slice_num) != 0;
+        add_repeating_timer_us((-1000 / (CLK_FREQ/CLK_TEST_CYCLES)), clk_presence_timer_callback, NULL, &timer);
+        return ret;
+    }
     return clock_detected;
 }

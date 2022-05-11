@@ -35,7 +35,10 @@ static inline void prepareRx()
     rxCount = 0;
     pio_sm_clear_fifos(rxPIO, rxDataSM);
     // Starts DMA
-    dma_hw->sniff_data = 0xFFFF;                //Restart CRC
+    dma_sniffer_enable(rxDMAChannel, 0x3, true);            // Turn on CRC-16/X-25
+    dma_hw->sniff_ctrl |= 0x800;    //Out inverted (bitwise complement, XOR out)
+    dma_hw->sniff_ctrl |= 0x400;    //Out bit-reversed
+    dma_hw->sniff_data = 0xFFFF;    //Start with 0xFFFF
     dma_channel_set_write_addr(rxDMAChannel, &destAddress, true);   //Start DMA transfer
 }
 
@@ -138,16 +141,6 @@ void configureRXDMA() {
     );
 }
 
-static inline void enableReceiver(bool enable)
-{
-    gpio_put(rxEnablePin, !enable);
-}
-
-static inline bool isReceiverEnabled()
-{
-    return !gpio_get(rxEnablePin);
-}
-
 /**
  * Configures receiver
  **/
@@ -176,14 +169,14 @@ void configureReceiver(uint rxEnPin, uint clkInPin, uint dataInPin)
 
 receiver_status receiveData(uint8_t address, uint8_t* buffer, uint32_t bufLen, uint32_t& rcvLen)
 {
-    if(firstUse) { //!isReceiverEnabled()){
+    if(firstUse) {
         //Sets receiver address
         rcvAddress = address;
         rxBuffer = buffer;
         rxBufferMaxLen = bufLen;
         prepareRx();
         //Enable the RX transceiver
-        //enableReceiver(true);
+        enableReceiver(true);
         firstUse = false;
     }
     receiver_status ret = busy;
@@ -194,15 +187,17 @@ receiver_status receiveData(uint8_t address, uint8_t* buffer, uint32_t bufLen, u
             if((((crcCheck>>16) & 0xFF) == buffer[rxCount-2]) &&
                 (((crcCheck>>24) & 0xFF) == buffer[rxCount-1])){
                     ret = done;
-            }else{            
+            }else{
+                printf("CRC : %lx/%x%x ", crcCheck,buffer[rxCount-2], buffer[rxCount-1]);
                 ret = bad_crc;
             }
             rcvLen = rxCount - 2;
         }else{
             rcvLen = 0;
-            ret = bad_crc;
+            ret = frame_short;
         }
         firstUse = true;
+        dma_sniffer_disable();
         //enableReceiver(false);
     }
     return ret;
