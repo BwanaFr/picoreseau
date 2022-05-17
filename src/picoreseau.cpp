@@ -13,6 +13,12 @@
 
 #include "picoreseau.hxx"
 
+#include "tusb_config.h"
+#include "tusb.h"
+#include "usb/get_serial.h"
+#include "usb/cdc_uart.h"
+
+
 #define DATA_RX_PIN 0
 #define CLK_RX_PIN 1
 #define RX_TRCV_ENABLE_PIN  2       //Receiver transceiver enable GPIO
@@ -122,6 +128,11 @@ void handle_state_selected() {
  * Application main entry
  **/
 int main() {
+    //board_init();
+    usb_serial_init();
+    cdc_uart_init();
+    tusb_init();
+
     stdio_init_all();
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
