@@ -4,6 +4,7 @@
 #include "hardware/dma.h"
 
 #include "hdlc_tx.pio.h"
+#include "clock_detect.h"
 
 #include <stdio.h>
 
@@ -58,6 +59,8 @@ void configureEmitter(uint txEnPin, uint clkTxPin, uint dataTxPin)
 void setClock(bool enabled)
 {
     if(enabled){
+        // Waits for the line to be free
+        wait_for_no_clock();
         dataActive = true;
         gpio_put(txEnablePin, true); 
     }else{
@@ -75,6 +78,7 @@ void setClock(bool enabled)
  **/
 void sendData(const uint8_t* buffer, uint len)
 {
+    setClock(true);
     //Prepare a DMA transfer
     uint8_t sDMAChannel = dma_claim_unused_channel(true);
     dma_channel_config c = dma_channel_get_default_config(sDMAChannel);
@@ -105,12 +109,9 @@ void sendData(const uint8_t* buffer, uint len)
     flagSent = false;
     pio_sm_put_blocking(txPIO, txDataSM, ((dma_hw->sniff_data>>16) & 0xFF));
     pio_sm_put_blocking(txPIO, txDataSM, ((dma_hw->sniff_data>>24) & 0xFF));
-    while(!flagSent){
+    while(!pio_sm_is_tx_fifo_empty(txPIO, txDataSM) & !flagSent){
         tight_loop_contents();
     }
     dma_sniffer_disable();
-    /*flagSent = false;
-    while(!flagSent){
-        tight_loop_contents();
-    }*/
+    setClock(false);
 }
