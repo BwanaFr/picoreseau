@@ -21,7 +21,7 @@ uint32_t rxBufferMaxLen = 0;    // Maximum length of buffer
 uint8_t rcvAddress = 0;         // Our expected address on the bus
 
 uint8_t destAddress = 0xFF;     // Address read on frame
-static volatile uint32_t crc[3] = {0,0,0};  // CRC at current byte, -1 ,2
+static volatile uint32_t crc[3] = {0, 0, 0};  // CRC at current byte, -1 ,2
 static volatile uint32_t rxCount = 0;       // Number of received bytes
 static volatile bool rxCompleted = false;   // RX completed
 static volatile bool skipData = false;      // Skip this frame
@@ -55,8 +55,10 @@ void __isr __time_critical_func(pio0_isr)() {
     if(pio_interrupt_get(rxPIO, 0)){
         pio_interrupt_clear(rxPIO, 0);
         pio_set_irq0_source_enabled(rxPIO, pis_interrupt0, false);
-        //Prepare for another transfer
-        prepareRx();
+        if(!rxCompleted) {
+            //Prepare for another transfer
+            prepareRx();
+        }
     }
 #endif
     //IRQ 1 is raised when a HDLC flag is recieved
@@ -69,9 +71,9 @@ void __isr __time_critical_func(pio0_isr)() {
             prepareRx();
         }else if(rxCount > 0){
             rxCompleted = true;            
-            gpio_put(PICO_DEFAULT_LED_PIN, false);  
         }
     }
+    gpio_put(PICO_DEFAULT_LED_PIN, false);
 }
 
 /**
@@ -102,13 +104,13 @@ void __isr __time_critical_func(rx_dma_isr)() {
                 //Receive data in real buffer
                 dma_channel_set_write_addr(rxDMAChannel, rxBuffer, true);
             }
-        }else if(!skipData/* && (++rxCount < rxBufferMaxLen)*/){
+        }else if(!skipData && (++rxCount < rxBufferMaxLen)) {
             //Start another transfer (buffer is big enough)
             dma_channel_set_write_addr(rxDMAChannel, &rxBuffer[rxCount], true);
-        }/*else{
+        }else{
             //Continue to empty buffer
             dma_channel_set_write_addr(rxDMAChannel, NULL, true);
-        }*/
+        }
     }
 }
 
@@ -178,7 +180,7 @@ receiver_status receiveHDLCData(uint8_t address, uint8_t* buffer, uint32_t bufLe
         rxBuffer = buffer;
         rxBufferMaxLen = bufLen;
         //Makes a timeout value
-        //timeOut = make_timeout_time_us(timeout);
+        timeOut = make_timeout_time_us(timeout);
         //Prepare DMA for receiving data
         prepareRx();
         //Enable the RX transceiver
@@ -203,10 +205,10 @@ receiver_status receiveHDLCData(uint8_t address, uint8_t* buffer, uint32_t bufLe
         }
         firstUse = true;
         dma_sniffer_disable();
-    }/*else if((timeout != 0) && (absolute_time_diff_us(timeOut, get_absolute_time()) > 0)){
+    }else if((timeout != 0) && (absolute_time_diff_us(timeOut, get_absolute_time()) > 0)){
         firstUse = true;
         dma_sniffer_disable();
         ret = time_out;
-    }*/
+    }
     return ret;
 }

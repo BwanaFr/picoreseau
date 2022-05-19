@@ -11,8 +11,9 @@
 #include "clock_detect.h"
 #include "pico/time.h"
 
+#ifdef USB_SUPPORT
 #include "usb/usb_tasks.h"
-
+#endif
 #include "picoreseau.hxx"
 
 #define DATA_RX_PIN 0
@@ -153,14 +154,16 @@ bool wait_for_ctrl(uint8_t& payload, uint8_t& caller, CTRL_WORD expected, uint64
 /**
  * Core 1 entry for running USB tasks
  **/
-void core1_entry() {
-    multicore_lockout_victim_init();
-    // Initializes the USB stack
-    nr_usb_init();
-    while(true){
-        // Runs USB tasks
-        nr_usb_tasks();
-    }
+ void core1_entry() {
+     multicore_lockout_victim_init();
+#ifdef USB_SUPPORT
+     // Initializes the USB stack
+     nr_usb_init();
+     while(true){
+         // Runs USB tasks
+         nr_usb_tasks();
+     }
+#endif
 }
 
 /**
@@ -184,9 +187,9 @@ int main() {
     }
     printf("\n");
     //Initialize the clock detection
-    //initialize_clock_detect();    
+    initialize_clock_detect();    
     //Initialize TX state machine
-    //configureEmitter(TX_TRCV_ENABLE_PIN, CLK_TX_PIN, DATA_TX_PIN);
+    configureEmitter(TX_TRCV_ENABLE_PIN, CLK_TX_PIN, DATA_TX_PIN);
     //Initialize RX state machine
     configureHDLCReceiver(RX_TRCV_ENABLE_PIN, CLK_RX_PIN, DATA_RX_PIN);
     enableHDLCReceiver(true);
@@ -198,7 +201,7 @@ int main() {
         case WAITING_FOR_LINE:
             
             if(wait_for_ctrl(pl, from)){
-                printf("Appel initial from %x with %u bytes\n", from, pl);
+                printf("Appel initial from %x with %u bytes\n", from, (pl*4));
                 state = LINE_TAKEN;
             }
             break;
@@ -206,7 +209,7 @@ int main() {
             break;
         default:
             break;
-        }       
+        }
         if(absolute_time_diff_us(pTime, get_absolute_time())>0){
             pTime = make_timeout_time_ms(500);
             printf(".");
