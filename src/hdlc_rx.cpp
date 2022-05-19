@@ -4,6 +4,7 @@
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "pico/sync.h"
+#include "pico/time.h"
 
 #include "hdlc_rx.pio.h"
 
@@ -24,7 +25,8 @@ static volatile uint32_t crc[3] = {0,0,0};  // CRC at current byte, -1 ,2
 static volatile uint32_t rxCount = 0;       // Number of received bytes
 static volatile bool rxCompleted = false;   // RX completed
 static volatile bool skipData = false;      // Skip this frame
-static bool firstUse = true;
+static bool firstUse = true;                // First use of the receiveData function
+static absolute_time_t timeOut = 0;         // Timeout timestamp
 
 #define USE_ABORT
 
@@ -58,7 +60,7 @@ void __isr __time_critical_func(pio0_isr)() {
     }
 #endif
     //IRQ 1 is raised when a HDLC flag is recieved
-    if(pio_interrupt_get(rxPIO, 1)){
+    if(pio_interrupt_get(rxPIO, 1)) {
         pio_interrupt_clear(rxPIO, 1);
         //Disable this IRQ (one shot IRQ)
         pio_set_irq0_source_enabled(rxPIO, pis_interrupt1, false);
@@ -67,9 +69,9 @@ void __isr __time_critical_func(pio0_isr)() {
             prepareRx();
         }else if(rxCount > 0){
             rxCompleted = true;            
+            gpio_put(PICO_DEFAULT_LED_PIN, false);  
         }
     }
-    gpio_put(PICO_DEFAULT_LED_PIN, false);
 }
 
 /**
@@ -100,12 +102,13 @@ void __isr __time_critical_func(rx_dma_isr)() {
                 //Receive data in real buffer
                 dma_channel_set_write_addr(rxDMAChannel, rxBuffer, true);
             }
-        }else if(!skipData){
-            //Increment rx count
-            ++rxCount;        
-            //Start another transfer
+        }else if(!skipData/* && (++rxCount < rxBufferMaxLen)*/){
+            //Start another transfer (buffer is big enough)
             dma_channel_set_write_addr(rxDMAChannel, &rxBuffer[rxCount], true);
-        }
+        }/*else{
+            //Continue to empty buffer
+            dma_channel_set_write_addr(rxDMAChannel, NULL, true);
+        }*/
     }
 }
 
@@ -144,13 +147,13 @@ void configureRXDMA() {
 /**
  * Configures receiver
  **/
-void configureReceiver(uint rxEnPin, uint clkInPin, uint dataInPin)
+void configureHDLCReceiver(uint rxEnPin, uint clkInPin, uint dataInPin)
 {
     //configure transceiver enable GPIO
     rxEnablePin = rxEnPin;
     gpio_init(rxEnablePin);
     gpio_set_dir(rxEnablePin, GPIO_OUT);
-    enableReceiver(false);    //Disable RX for now
+    enableHDLCReceiver(false);    //Disable RX for now
 
     //HDLC RX PIO configuration
     pio_sm_config rxDataSMCfg;
@@ -167,16 +170,19 @@ void configureReceiver(uint rxEnPin, uint clkInPin, uint dataInPin)
     configureRXDMA();
 }
 
-receiver_status receiveData(uint8_t address, uint8_t* buffer, uint32_t bufLen, uint32_t& rcvLen)
+receiver_status receiveHDLCData(uint8_t address, uint8_t* buffer, uint32_t bufLen, uint32_t& rcvLen, uint64_t timeout)
 {
     if(firstUse) {
         //Sets receiver address
         rcvAddress = address;
         rxBuffer = buffer;
         rxBufferMaxLen = bufLen;
+        //Makes a timeout value
+        //timeOut = make_timeout_time_us(timeout);
+        //Prepare DMA for receiving data
         prepareRx();
         //Enable the RX transceiver
-        enableReceiver(true);
+        enableHDLCReceiver(true);
         firstUse = false;
     }
     receiver_status ret = busy;
@@ -188,7 +194,6 @@ receiver_status receiveData(uint8_t address, uint8_t* buffer, uint32_t bufLen, u
                 (((crcCheck>>24) & 0xFF) == buffer[rxCount-1])){
                     ret = done;
             }else{
-                printf("CRC : %lx/%x%x ", crcCheck,buffer[rxCount-2], buffer[rxCount-1]);
                 ret = bad_crc;
             }
             rcvLen = rxCount - 2;
@@ -198,7 +203,10 @@ receiver_status receiveData(uint8_t address, uint8_t* buffer, uint32_t bufLen, u
         }
         firstUse = true;
         dma_sniffer_disable();
-        //enableReceiver(false);
-    }
+    }/*else if((timeout != 0) && (absolute_time_diff_us(timeOut, get_absolute_time()) > 0)){
+        firstUse = true;
+        dma_sniffer_disable();
+        ret = time_out;
+    }*/
     return ret;
 }

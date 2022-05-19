@@ -19,8 +19,9 @@ add_executable(picoreseau
     src/hdlc_tx.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/version.cpp
     src/usb/cdc_uart.c
-    src/usb/get_serial.c
+    src/usb/get_unique_serial.c
     src/usb/usb_descriptors.c
+    src/usb/usb_tasks.c
 )
 
 ADD_CUSTOM_COMMAND(
@@ -39,7 +40,7 @@ target_include_directories(picoreseau PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" 
 # Add the standard library to the build
 target_link_libraries(picoreseau pico_stdlib pico_multicore pico_sync hardware_pio hardware_pwm hardware_dma pico_unique_id tinyusb_device tinyusb_board)
 
-target_compile_options(picoreseau PUBLIC -Wall -Wextra -Wno-unused-function -Wno-unused-parameter)
+target_compile_options(picoreseau PUBLIC -Wall -Wextra -Wno-unused-function -Wno-unused-parameter -Wno-ignored-qualifiers)
 
 pico_set_program_name(picoreseau "picoreseau")
 pico_set_program_version(picoreseau "0.1")

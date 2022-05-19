@@ -11,7 +11,6 @@
 
 static uint slice_num = 0;  //PWM slice number
 
-
 void initialize_clock_detect() {
     slice_num = pwm_gpio_to_slice_num(CLK_IN_PIN);
 

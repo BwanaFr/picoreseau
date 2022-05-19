@@ -34,7 +34,7 @@
 extern char usb_serial[];
 
 /* Fills unique_serial with the flash unique id */
-extern void usb_serial_init(void);
+extern void usb_serial_id_init(void);
 
 #ifdef __cplusplus
  }

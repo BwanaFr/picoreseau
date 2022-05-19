@@ -11,28 +11,24 @@
 #include "clock_detect.h"
 #include "pico/time.h"
 
+#include "usb/usb_tasks.h"
+
 #include "picoreseau.hxx"
-
-#include "tusb_config.h"
-#include "tusb.h"
-#include "usb/get_serial.h"
-#include "usb/cdc_uart.h"
-
 
 #define DATA_RX_PIN 0
 #define CLK_RX_PIN 1
-#define RX_TRCV_ENABLE_PIN  2       //Receiver transceiver enable GPIO
+#define RX_TRCV_ENABLE_PIN  2       // Receiver transceiver enable GPIO
 
 #define DATA_TX_PIN 3
 #define CLK_TX_PIN 4
-#define TX_TRCV_ENABLE_PIN 5        //Emit transceiver enable GPIO
+#define TX_TRCV_ENABLE_PIN 5        // Emit transceiver enable GPIO
 
 #define DEV_NUMBER 0x0              // Device address on BUS (0 for master)
 
 #define MIN_CONSIGNE_LEN 11         // A consigne must be at least 11 bytes
 
 uint8_t buffer[65535];
-NR_STATE state = IDLE;
+NR_STATE state = WAITING_FOR_LINE;
 Consigne consigne;
 uint8_t dest = 0;
 uint8_t msg_num = 0;
@@ -40,121 +36,130 @@ uint8_t msg_num = 0;
  * Convert a RX buffer to consigne
  **/
 void buffer_to_consigne(uint8_t* buffer, Consigne* consigne, uint32_t len) {
-    consigne->length = len - 3; //Remove the 3 first bytes
-    memcpy(&consigne->dest, &buffer[3], (sizeof(Consigne) - sizeof(consigne->ctx_data) -sizeof(consigne->length)));
-    consigne->ctx_data = &buffer[10];
+    if(len > (sizeof(Consigne) + 3)){
+        len = sizeof(Consigne) + 3;
+    }
+    memcpy(&consigne->code_tache, &buffer[1], len-1);
+    consigne->length = len - 3;     // Remove the 3 first bytes (this is part of the transport)
+    consigne->dest = buffer[0];     // Destination is the first byte of the destination
 }
 
 /**
  * Handles when the device is IDLE
  **/
-void handle_state_idle() {
-    enum InternalState {WAIT_SELECT, GET_COMMAND, ACK, WAIT_IDLE, ERROR};
-    static InternalState int_state = WAIT_SELECT;
+// void handle_state_idle() {
+//     enum InternalState {WAIT_SELECT, GET_COMMAND, ACK, WAIT_IDLE, ERROR};
+//     static InternalState int_state = WAIT_SELECT;
+//     uint32_t nbBytes = 0;
+//     receiver_status status = bad_crc;
+//     switch (int_state)
+//     {
+//     case WAIT_SELECT:
+//         //Waits to receive a "Prise de ligne" request
+//         consigne.length = 0;
+//         status = receiveHDLCData(DEV_NUMBER, buffer, sizeof(buffer), nbBytes);
+//         if((status == done) && (nbBytes == 2)){
+//             uint8_t ctrlW = buffer[0] & 0xF0;
+//             // Lenght of the consigne
+//             consigne.length = (buffer[0] & 0xF) * 4;
+//             dest = buffer[1];
+//             if(ctrlW == MCAPI){
+//                 // Got select
+//                 //printf("Appel initial de %u\n", dest);
+//                 // Send echo by outputing a clock
+//                 wait_for_no_clock();
+//                 sleep_us(50);
+//                 setClock(true);
+//                 sleep_us(300);
+//                 int_state = GET_COMMAND;
+//                 return;
+//             }
+//         }
+//         break;
+//     case GET_COMMAND:
+//         //Stop sending echo
+//         setClock(false);
+//         // Receives the command
+//         status = receiveHDLCData(DEV_NUMBER, buffer, sizeof(buffer), nbBytes);
+//         if(status == done){
+//             if(nbBytes < consigne.length){
+//                 printf("Received %u bytes/%lu", nbBytes, consigne.length);
+//                 int_state = ERROR;
+//                 break;
+//             }else{
+//                 buffer_to_consigne(buffer, &consigne, nbBytes);
+//                 int_state = ACK;
+//             }
+//         }
+//         break;
+//     case ACK:
+//         // Sends the acknowledge
+//         uint8_t ack[3];
+//         ack[0] = dest;
+//         ack[1] = MCPCH;
+//         ack[2] = DEV_NUMBER;
+//         sendData(ack, sizeof(ack));
+//         int_state = WAIT_IDLE;
+//         break;
+//     case WAIT_IDLE:
+//         status = receiveHDLCData(DEV_NUMBER, buffer, sizeof(buffer), nbBytes);
+//         if((status == done) && (nbBytes == 2)){
+//             uint8_t ctrlW = buffer[0] & 0xF0;
+//             if(ctrlW == MCAMA){
+//                 msg_num = buffer[0] & 0xF;
+//                 // Got select
+//                 printf("Avis de mise en attente de %u (msg num : %x)\n", dest, msg_num);
+//                 int_state = WAIT_SELECT;
+//                 state = SELECTED;
+//                 return;
+//             }else{
+//                 int_state = ERROR;
+//             }
+//         }else if(status != busy){
+//             printf("%u ", status);
+//             int_state = ERROR;
+//         }
+//         break;
+//     default:
+//         break;
+//     }
+//     if(int_state == ERROR){
+//         printf("Error!\n");
+//         setClock(false);
+//         int_state = WAIT_SELECT;
+//         state = IDLE;
+//     }
+// }
+
+bool wait_for_ctrl(uint8_t& payload, uint8_t& caller, CTRL_WORD expected, uint64_t timeout) {
+    absolute_time_t stopTime = make_timeout_time_us(timeout);
+    uint8_t rxBuffer[10];  //Received buffer contains only 2 bytes because our address is already filtered by receiveHDLCData
     uint32_t nbBytes = 0;
-    receiver_status status = bad_crc;
-    switch (int_state)
-    {
-    case WAIT_SELECT:
-        //Waits to receive a "Prise de ligne" request
-        consigne.length = 0;
-        status = receiveData(DEV_NUMBER, buffer, sizeof(buffer), nbBytes);
-        if((status == done) && (nbBytes == 2)){
-            uint8_t ctrlW = buffer[0] & 0xF0;
-            // Lenght of the consigne
-            consigne.length = (buffer[0] & 0xF) * 4;
-            dest = buffer[1];
-            if(ctrlW == MCAPI){
-                // Got select
-                //printf("Appel initial de %u\n", dest);
-                // Send echo by outputing a clock
-                wait_for_no_clock();
-                sleep_us(50);
-                setClock(true);
-                sleep_us(300);
-                int_state = GET_COMMAND;
-                return;
+    do{
+        if((receiveHDLCData(DEV_NUMBER, rxBuffer, sizeof(rxBuffer), nbBytes) == done) && (nbBytes == 2)) {
+            uint8_t ctrlW = rxBuffer[0] & 0xF0;
+            if(ctrlW == expected) {
+                payload = rxBuffer[0] & 0xF;
+                caller = rxBuffer[1];
+                return true;
             }
         }
-        break;
-    case GET_COMMAND:
-        //Stop sending echo
-        setClock(false);
-        // Receives the command
-        status = receiveData(DEV_NUMBER, buffer, sizeof(buffer), nbBytes);
-        if(status == done){
-            if(nbBytes < consigne.length){
-                printf("Received %u bytes/%lu", nbBytes, consigne.length);
-                int_state = ERROR;
-                break;
-            }else{
-                buffer_to_consigne(buffer, &consigne, nbBytes);
-                int_state = ACK;
-            }
-        }
-        break;
-    case ACK:
-        // Sends the acknowledge
-        uint8_t ack[3];
-        ack[0] = dest;
-        ack[1] = MCPCH;
-        ack[2] = DEV_NUMBER;
-        sendData(ack, sizeof(ack));
-        int_state = WAIT_IDLE;
-        break;
-    case WAIT_IDLE:
-        status = receiveData(DEV_NUMBER, buffer, sizeof(buffer), nbBytes);
-        if((status == done) && (nbBytes == 2)){
-            uint8_t ctrlW = buffer[0] & 0xF0;
-            if(ctrlW == MCAMA){
-                msg_num = buffer[0] & 0xF;
-                // Got select
-                printf("Avis de mise en attente de %u (msg num : %x)\n", dest, msg_num);
-                int_state = WAIT_SELECT;
-                state = SELECTED;
-                return;
-            }else{
-                int_state = ERROR;
-            }
-        }else if(status != busy){
-            printf("%u ", status);
-            int_state = ERROR;
-        }
-        break;
-    default:
-        break;
-    }
-    if(int_state == ERROR){
-        printf("Error!\n");
-        setClock(false);
-        int_state = WAIT_SELECT;
-        state = IDLE;
-    }
+
+    }while((timeout == 0) || (absolute_time_diff_us(stopTime, get_absolute_time()) > 0));
+    //Here, a timeout occured
+    return false;
 }
 
-void handle_state_selected() {
-    enum InternalState {SDCALL, WAIT_ECHO, SEND_CMD, WAIT_ACK};
-    static InternalState int_state = SDCALL;
-    switch(int_state){
-        case SDCALL:
-            printf("SDCALL\n");
-            sleep_us(100);
-            uint8_t msg[3];
-            msg[0] = dest;
-            //msg[1] = MCAPA | msg_num;
-            msg[1] = MCDISC;
-            msg[2] = DEV_NUMBER;
-            sendData(msg, sizeof(msg));
-            int_state = WAIT_ECHO;
-            break;
-        case WAIT_ECHO:
-            while(!is_clock_detected(true)){}
-            printf("Echo detected!\n");
-            int_state = SDCALL;
-            state = IDLE;
-            break;
-        case SEND_CMD:
-            break;
+/**
+ * Core 1 entry for running USB tasks
+ **/
+void core1_entry() {
+    multicore_lockout_victim_init();
+    // Initializes the USB stack
+    nr_usb_init();
+    while(true){
+        // Runs USB tasks
+        nr_usb_tasks();
     }
 }
 
@@ -163,10 +168,7 @@ void handle_state_selected() {
  **/
 int main() {
     //board_init();
-    usb_serial_init();
-    cdc_uart_init();
-    tusb_init();
-
+    multicore_launch_core1(core1_entry);
     stdio_init_all();
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
@@ -182,21 +184,25 @@ int main() {
     }
     printf("\n");
     //Initialize the clock detection
-    initialize_clock_detect();    
+    //initialize_clock_detect();    
     //Initialize TX state machine
-    configureEmitter(TX_TRCV_ENABLE_PIN, CLK_TX_PIN, DATA_TX_PIN);
+    //configureEmitter(TX_TRCV_ENABLE_PIN, CLK_TX_PIN, DATA_TX_PIN);
     //Initialize RX state machine
-    configureReceiver(RX_TRCV_ENABLE_PIN, CLK_RX_PIN, DATA_RX_PIN);
-    enableReceiver(true);
+    configureHDLCReceiver(RX_TRCV_ENABLE_PIN, CLK_RX_PIN, DATA_RX_PIN);
+    enableHDLCReceiver(true);
     absolute_time_t pTime = make_timeout_time_ms(500);
+    uint8_t pl, from = 0;
     while(true){
         switch (state)
         {
-        case IDLE:
-            handle_state_idle();
+        case WAITING_FOR_LINE:
+            
+            if(wait_for_ctrl(pl, from)){
+                printf("Appel initial from %x with %u bytes\n", from, pl);
+                state = LINE_TAKEN;
+            }
             break;
-        case SELECTED:
-            handle_state_selected();            
+        case LINE_TAKEN:                 
             break;
         default:
             break;
