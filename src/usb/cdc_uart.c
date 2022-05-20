@@ -27,9 +27,10 @@
 
 #include "tusb.h"
 #include <pico/stdio/driver.h>
+#include <pico/bootrom.h>
 
 
-
+#define PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE 1200
 #define STDIO_USB_STDOUT_TIMEOUT_US 500000
 
 static void stdio_usb_out_chars(uint8_t itf, const char *buf, int length) {
@@ -69,17 +70,17 @@ static int stdio_usb_in_chars(uint8_t itf, char *buf, int length) {
 }
 
 static void stdio_usb_cdc0_out_chars(const char *buf, int len) {
-  stdio_usb_out_chars(0, buf, len);
+    stdio_usb_out_chars(0, buf, len);
 }
 static int stdio_usb_cdc0_in_chars(char *buf, int len) {
-  return stdio_usb_in_chars(0, buf, len);
+    return stdio_usb_in_chars(0, buf, len);
 }
 
 static stdio_driver_t stdio_usb_cdc_driver =
 {
-.out_chars = stdio_usb_cdc0_out_chars,
-.in_chars = stdio_usb_cdc0_in_chars,
-.crlf_enabled = true
+    .out_chars = stdio_usb_cdc0_out_chars,
+    .in_chars = stdio_usb_cdc0_in_chars,
+    .crlf_enabled = true
 };
 
 void cdc_uart_init(void) {
@@ -87,6 +88,8 @@ void cdc_uart_init(void) {
 }
 
 void tud_cdc_line_coding_cb(uint8_t itf, cdc_line_coding_t const* line_coding) {
-    //picoprobe_info("New baud rate %d\n", line_coding->bit_rate);
-    //uart_init(PICOPROBE_UART_INTERFACE, line_coding->bit_rate);
+    if (line_coding->bit_rate == PICO_STDIO_USB_RESET_MAGIC_BAUD_RATE) {
+        const uint gpio_mask = (1<<PICO_DEFAULT_LED_PIN);
+        reset_usb_boot(gpio_mask, 0u);
+    }
 }

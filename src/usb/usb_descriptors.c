@@ -62,10 +62,9 @@ uint8_t const * tud_descriptor_device_cb(void)
 
 enum
 {
+  ITF_NUM_NR_CTRL,
   ITF_NUM_CDC_COM,
   ITF_NUM_CDC_DATA,
-  ITF_NUM_NR_CTRL,
-  ITF_NUM_NR_DATA,
   ITF_NUM_TOTAL
 };
 
@@ -74,21 +73,17 @@ enum
 #define NR_CTRL_EP_NUM 0x03
 #define NR_DATA_EP_NUM 0x04
 
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_VENDOR_DESC_LEN + TUD_VENDOR_DESC_LEN)
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_VENDOR_DESC_LEN)
 
 uint8_t const desc_configuration[] =
 {
   TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 300),
 
-  // Interface 0 + 1
-  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_COM, 0, CDC_NOTIFICATION_EP_NUM, 64, CDC_DATA_EP_NUM, CDC_DATA_EP_NUM | 0x80, 64),
-
-  // Interface 2, used for nanoreseau control 
+  // Interface 0, used for nanoreseau control 
   TUD_VENDOR_DESCRIPTOR(ITF_NUM_NR_CTRL, 4, NR_CTRL_EP_NUM, NR_CTRL_EP_NUM | 0x80, 64),
 
-  // Interface 3, used for nanoreseau data
-  TUD_VENDOR_DESCRIPTOR(ITF_NUM_NR_DATA, 5, NR_DATA_EP_NUM, NR_DATA_EP_NUM | 0x80, 64)
-
+  // Interface 1 + 2
+  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_COM, 0, CDC_NOTIFICATION_EP_NUM, 64, CDC_DATA_EP_NUM, CDC_DATA_EP_NUM | 0x80, 64),
 };
 
 
@@ -112,8 +107,8 @@ char const* string_desc_arr [] =
   "BwanaFr",                      // 1: Manufacturer
   "Picoreseau",                   // 2: Product
   usb_serial,                     // 3: Serial, uses flash unique ID
-  "NR control",                   // 4 : Nanoreseau control endpoints
-  "NR data",                      // 5 : Nanoreseau data endpoints
+  "Nanoreseau data",              // 4 : Nanoreseau data endpoints
+  //"NR data",                    // 5 : Nanoreseau data endpoints
 };
 
 static uint16_t _desc_str[32];

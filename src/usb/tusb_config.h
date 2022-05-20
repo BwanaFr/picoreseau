@@ -66,13 +66,14 @@
 #define CFG_TUD_CDC             1
 #define CFG_TUD_MSC             0
 #define CFG_TUD_MIDI            0
-#define CFG_TUD_VENDOR          2
+#define CFG_TUD_VENDOR          1
 
 #define CFG_TUD_CDC_RX_BUFSIZE 64
 #define CFG_TUD_CDC_TX_BUFSIZE 64
 
-#define CFG_TUD_VENDOR_RX_BUFSIZE 64
-#define CFG_TUD_VENDOR_TX_BUFSIZE 64
+// #define CFG_TUD_VENDOR_EPSIZE 512
+#define CFG_TUD_VENDOR_RX_BUFSIZE 512
+#define CFG_TUD_VENDOR_TX_BUFSIZE 512
 
 #ifdef __cplusplus
  }

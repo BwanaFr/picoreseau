@@ -11,10 +11,10 @@
 #include "clock_detect.h"
 #include "pico/time.h"
 
-#ifdef USB_SUPPORT
-#include "usb/usb_tasks.h"
-#endif
+#include "usb/usb_tasks.hxx"
 #include "picoreseau.hxx"
+
+#include "tusb.h"
 
 #define DATA_RX_PIN 0
 #define CLK_RX_PIN 1
@@ -33,6 +33,7 @@ NR_STATE state = WAITING_FOR_LINE;
 Consigne consigne;
 uint8_t dest = 0;
 uint8_t msg_num = 0;
+
 /**
  * Convert a RX buffer to consigne
  **/
@@ -156,14 +157,12 @@ bool wait_for_ctrl(uint8_t& payload, uint8_t& caller, CTRL_WORD expected, uint64
  **/
  void core1_entry() {
      multicore_lockout_victim_init();
-#ifdef USB_SUPPORT
      // Initializes the USB stack
      nr_usb_init();
      while(true){
          // Runs USB tasks
          nr_usb_tasks();
      }
-#endif
 }
 
 /**
@@ -186,6 +185,7 @@ int main() {
         sleep_ms(100);
     }
     printf("\n");
+    printf("Lenght of Consigne is %u\n", sizeof(Consigne));
     //Initialize the clock detection
     initialize_clock_detect();    
     //Initialize TX state machine
@@ -196,7 +196,7 @@ int main() {
     absolute_time_t pTime = make_timeout_time_ms(500);
     uint8_t pl, from = 0;
     while(true){
-        switch (state)
+        /*switch (state)
         {
         case WAITING_FOR_LINE:
             
@@ -209,10 +209,13 @@ int main() {
             break;
         default:
             break;
-        }
+        }*/
         if(absolute_time_diff_us(pTime, get_absolute_time())>0){
-            pTime = make_timeout_time_ms(500);
-            printf(".");
+            pTime = make_timeout_time_ms(1000);            
+            if(tud_vendor_mounted()){
+                // printf(".");
+                nr_usb_publish_state(LINE_TAKEN, &consigne);
+            }
         }
     }
 }
