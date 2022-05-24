@@ -214,7 +214,7 @@ int main() {
             pTime = make_timeout_time_ms(1000);            
             if(tud_vendor_mounted()){
                 // printf(".");
-                nr_usb_publish_state(LINE_TAKEN, &consigne);
+                //nr_usb_publish_state(LINE_TAKEN, &consigne);
             }
         }
     }

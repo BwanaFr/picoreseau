@@ -15,7 +15,6 @@ enum NR_STATE{
  */
 enum NR_ERROR{
     NO_ERROR,
-    
 };
 
 //Control words
