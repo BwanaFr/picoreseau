@@ -2,10 +2,20 @@
 #define _PICORESEAU_HXX__
 #include "pico/stdlib.h"
 
-//Main state machine
+/**
+ * Main state machine states
+ */
 enum NR_STATE{
     WAITING_FOR_LINE,   // Waits for a peer to take line
     LINE_TAKEN,         // Line taken with peer
+};
+
+/**
+ * Errors codes
+ */
+enum NR_ERROR{
+    NO_ERROR,
+    
 };
 
 //Control words
