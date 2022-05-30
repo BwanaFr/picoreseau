@@ -19,18 +19,20 @@ class USBCommand:
         if "tx_data" in kwargs:
             # Send data to nanoreseau
             self.cmd = USBCommand.CMD_PUT_DATA
-            self.payload = struct.pack('>H', kwargs["tx_data"])
+            self.payload = struct.pack('<H', len(kwargs["tx_data"]))
         if "rx_data" in kwargs:
             # Send data to nanoreseau
             self.cmd = USBCommand.CMD_GET_DATA
-            self.payload = struct.pack('>H', kwargs["rx_data"])
+            self.payload = struct.pack('<H', len(kwargs["rx_data"]))
         if "disconnect" in kwargs:
             # Send data to nanoreseau
             self.cmd = USBCommand.CMD_DISCONNECT
-            self.payload = struct.pack('>B', kwargs["disconnect"])
+            self.payload = struct.pack('B', kwargs["disconnect"])
     
     def to_bytes(self):
-        ret = bytearray(struct.calcsize('>B') + len(self.payload))
-        struct.pack_into('>B', ret, 0, self.cmd)
-        ret[struct.calcsize('>B'):] = self.payload
+        ret = bytearray(struct.calcsize('B') + len(self.payload))
+        print(f'Payload size is {len(self.payload)}')
+        struct.pack_into('B', ret, 0, self.cmd)
+        ret[struct.calcsize('B'):] = self.payload
+        print(ret)
         return ret

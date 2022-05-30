@@ -83,9 +83,11 @@ class Consigne:
 
     def to_bytes(self):
         # Consigne length is always a multiple of 4
-        length = ((1 + self.CONSIGNE_HEADER_SIZE + len(self.ctx_data)) % 4) * 4
-        ret = bytearray(length + 1)
+        length = (((self.CONSIGNE_HEADER_SIZE + len(self.ctx_data)) % 4) + 1) * 4
+        ret = bytearray(length + 1)             # Adds one byte for consigne length
         struct.pack_into('>B', ret, 0, length)  # Sets lenght of consigne
+        print(f'Consigne len : {length}')
+        # Append consigne structure to our bytearray
         struct.pack_into(self.CONSIGNE_HEADER, ret, 1,
                         self.dest,
                         self.code_tache,
@@ -95,7 +97,9 @@ class Consigne:
                         self.msg_addr,
                         self.computer,
                         self.application)
-        ret[self.CONSIGNE_HEADER_SIZE + 1:] = self.ctx_data
+        ctx_offset = self.CONSIGNE_HEADER_SIZE + 1
+        # Insert context data in the buffer
+        ret[ctx_offset:ctx_offset+len(self.ctx_data)] = self.ctx_data
         return ret
     
     def __str__(self):

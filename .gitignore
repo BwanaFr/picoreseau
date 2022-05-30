@@ -5,3 +5,4 @@
 *.xlsx
 build
 __pycache__
+*.MO5

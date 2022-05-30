@@ -29,8 +29,9 @@
 #define MIN_CONSIGNE_LEN 11         // A consigne must be at least 11 bytes
 
 uint8_t buffer[65535];
-NR_STATE state = WAITING_FOR_LINE;
-Consigne consigne;
+NR_STATE nr_state = NR_IDLE;
+NR_ERROR nr_error = NO_ERROR;
+Consigne current_consigne;
 uint8_t dest = 0;
 uint8_t msg_num = 0;
 
@@ -41,9 +42,9 @@ void buffer_to_consigne(uint8_t* buffer, Consigne* consigne, uint32_t len) {
     if(len > (sizeof(Consigne) + 3)){
         len = sizeof(Consigne) + 3;
     }
-    memcpy(&consigne->code_tache, &buffer[1], len-1);
+    memcpy(&consigne->data, &buffer[1], len-1);
     consigne->length = len - 3;     // Remove the 3 first bytes (this is part of the transport)
-    consigne->dest = buffer[0];     // Destination is the first byte of the destination
+    consigne->dest = buffer[0];     // Destination is the first byte of the rx buffer
 }
 
 /**
@@ -146,7 +147,6 @@ bool wait_for_ctrl(uint8_t& payload, uint8_t& caller, CTRL_WORD expected, uint64
                 return true;
             }
         }
-
     }while((timeout == 0) || (absolute_time_diff_us(stopTime, get_absolute_time()) > 0));
     //Here, a timeout occured
     return false;
@@ -185,7 +185,7 @@ int main() {
         sleep_ms(100);
     }
     printf("\n");
-    printf("Lenght of Consigne is %u\n", sizeof(Consigne));
+    printf("Lenght of Consigne data is %u\n", sizeof(ConsigneData));
     //Initialize the clock detection
     initialize_clock_detect();    
     //Initialize TX state machine
@@ -218,4 +218,14 @@ int main() {
             }
         }
     }
+}
+
+
+NR_STATE get_nr_state(NR_ERROR &error) {
+    error = nr_error;
+    return nr_state;
+}
+
+const Consigne* get_nr_current_consigne() {
+    return &current_consigne;
 }

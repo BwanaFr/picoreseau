@@ -3,6 +3,7 @@ import usb.core
 import usb.util
 from picoreseau.consigne import Consigne
 from picoreseau.usb import USBCommand
+import time
 
 if __name__ == "__main__":   
     # find our device
@@ -29,6 +30,13 @@ if __name__ == "__main__":
             usb.util.ENDPOINT_OUT)
 
     assert ep is not None
+    data = bytearray(0xffff)
+    for i in range(len(data)):
+        data[i] = i & 0xff
+    cmd = USBCommand(tx_data=data)
+    ep.write(cmd.to_bytes())
+    ep.write(data)
+    time.sleep(0.2)
     c = Consigne()
     c.code_tache = 9
     c.code_app = 32
