@@ -1,6 +1,7 @@
 #ifndef _PICORESEAU_HXX__
 #define _PICORESEAU_HXX__
 #include "pico/stdlib.h"
+#include "hdlc_rx.h"
 
 /**
  * Main state machine states
@@ -63,19 +64,9 @@ typedef struct Consigne {
  * @param caller Caller station number
  * @param expected Control word to expect
  * @param timeout RX timeout in us (0 if no timeout)
- * @return True on success, false on failure
+ * @return Receiver status
  **/
-bool wait_for_ctrl(uint8_t& payload, uint8_t& caller, CTRL_WORD expected = MCAPI, uint64_t timeout=0);
-
-/**
- * Gets nanoreseau device state
- **/
-NR_STATE get_nr_state(NR_ERROR &error);
-
-/**
- * Gets nanoreseau current consigne
- **/
-const Consigne* get_nr_current_consigne();
+receiver_status wait_for_ctrl(uint8_t& payload, uint8_t& caller, CTRL_WORD expected = MCAPI, uint64_t timeout=0);
 
 /**
  * Sends a disconnect request to the station
@@ -83,11 +74,12 @@ const Consigne* get_nr_current_consigne();
 void send_nr_disconnect();
 
 /**
- * Sends a consigne to a device
+ * Sends a consigne to a device (called from USB functions)
  * If the device is actually the one selected
  * A MCAPA will be issued. Else, a line take request will be made.
  * 
  **/
 void send_consigne(const Consigne* consigne);
+
 
 #endif

@@ -234,3 +234,11 @@ receiver_status receiveHDLCData(uint8_t address, uint8_t* buffer, uint32_t bufLe
     }
     return ret;
 }
+
+void resetReceiverState() {
+    firstUse = true;
+    if(rxDMAChannel != -1){
+        dma_sniffer_disable();
+        dma_channel_abort(rxDMAChannel);
+    }
+}

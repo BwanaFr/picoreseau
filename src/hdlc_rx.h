@@ -1,4 +1,5 @@
 #ifndef __HDLC_RX_H__
+#define __HDLC_RX_H__
 #include "pico/stdlib.h"
 
 extern uint rxEnablePin;
@@ -36,6 +37,11 @@ static inline bool isHDLCReceiverEnabled()
 {
     return !gpio_get(rxEnablePin);
 }
+
+/**
+ * Resets the receiver internal state
+ **/
+void resetReceiverState();
 
 
 #endif

@@ -5,10 +5,12 @@ class USBCommand:
     """
     Class representing USB commands
     """
-    CMD_PUT_CONSIGNE = 0
-    CMD_GET_DATA = 1
-    CMD_PUT_DATA = 2
-    CMD_DISCONNECT = 3
+    CMD_GET_STATUS = 0
+    CMD_GET_CONSIGNE = 1
+    CMD_PUT_CONSIGNE = 2
+    CMD_GET_DATA = 3
+    CMD_PUT_DATA = 4
+    CMD_DISCONNECT = 5
 
     def __init__(self, **kwargs):
         self.payload = None

@@ -11,6 +11,7 @@
  **/
 enum USB_CMD{
     CMD_GET_STATUS,             // Gets device status
+    CMD_GET_CONSIGNE,           // Gets the current consigne
     CMD_PUT_CONSIGNE,           // Sends a consigne
     CMD_GET_DATA,               // Receive data
     CMD_PUT_DATA,               // Send data
@@ -22,7 +23,7 @@ enum USB_CMD{
  **/
 enum USB_STATE{
     IDLE,                   // Monitors USB for data RX
-    SEND_STATUS,            // Sends status to USB
+    SENDING_STATUS,         // Sends status to USB
     SENDING_CONSIGNE,       // Sends consigne to USB
     SENDING_DATA_HEADER,    // Sends data header to USB (before sending data chunk)
     SENDING_DATA,           // Sends data received from Nanoreseau to USB
@@ -44,10 +45,23 @@ void nr_usb_tasks();
 /**
  * Updates the picoreseau state on USB
  * @param state Picoreseau state
- * @param error Error code
- * @param current_consigne Current consigne
  **/
-void nr_usb_publish_state(NR_STATE state, NR_ERROR error, const Consigne* current_consigne);
+void nr_usb_set_state(NR_STATE state);
+
+/**
+ * Updates the picoreseau error status on USB
+ * @param error Error code
+ * @param errMsg Error message as string format
+ **/
+void nr_usb_set_error(NR_ERROR error, const char* errMsg);
+
+/**
+ * Updates the actual consigne on USB
+ * @param peer Address of the peer sending the consigne (initial call)
+ * @param exchange_num Exchange number after the initial call
+ * @param consigne Pointer to the received consigne
+ **/
+void nr_usb_set_consigne(uint8_t peer,  uint8_t exchange_num, const Consigne* consigne);
 
 /**
  * Gets any USB pending command

@@ -8,11 +8,19 @@
 
 #pragma pack (1)
 typedef struct USB_STATUS_OUT {
-    uint8_t state;
-    uint8_t error;
-    Consigne consigne;
+    uint8_t state;              // Device state
+    uint8_t error;              // Error code
+    char errorMsg[60];          // Error message
 }USB_STATUS_OUT;
 
+#pragma pack (1)
+typedef struct USB_CONSIGNE_OUT {
+    uint8_t peer;               // Last peer identifier
+    uint8_t exchange_num;       // Last exchange number
+    Consigne consigne;          // Consigne data
+}USB_CONSIGNE_OUT;
+
+#pragma pack (1)
 typedef struct USB_DATA_IN {
     uint8_t cmd;
     union cmd_payload
@@ -26,7 +34,7 @@ typedef struct USB_DATA_IN {
 static USB_STATE usb_state = IDLE;
 static USB_DATA_IN data_in;
 static USB_STATUS_OUT status_out;
-static uint nb_write = 0;
+static USB_CONSIGNE_OUT consigne_out;
 auto_init_mutex(usb_mutex);
 uint8_t usb_buffer[65535];
 
@@ -37,21 +45,41 @@ void nr_usb_init() {
     cdc_uart_init();
     // Initializes TinyUSB stack
     tusb_init();
+    // Initializes structures
+    memset(&status_out, 0, sizeof(status_out));
+    memset(&consigne_out, 0, sizeof(consigne_out));
+}
+
+/**
+ * Writes all bytes to vendor endpoint
+ * @param buffer Buffer containing bytes to write
+ * @param bufsize Buffer size
+ **/
+void tud_vendor_write_all(void const* buffer, uint32_t bufsize) {
+    uint8_t const* buf = (uint8_t const*)buffer;
+    while(bufsize > 0){
+        uint32_t wrote = tud_vendor_write(buf, bufsize);
+        bufsize -= wrote;
+        buf += wrote;
+    }
 }
 
 void nr_usb_tasks() {
-    uint8_t* ptr = nullptr;
     //TODO: Check if USB is mounted using tud_vendor_mounted
     tud_task();
 
     if(usb_state == IDLE){
+        // Check is a command is received
         if(tud_vendor_available()){
             // Reads command received on USB
             uint32_t r = tud_vendor_read(&data_in, 1);
             if(r == 1){
                 switch(data_in.cmd){
                     case CMD_GET_STATUS:
-                        usb_state = SEND_STATUS;
+                        usb_state = SENDING_STATUS;
+                        break;
+                    case CMD_GET_CONSIGNE:
+                        usb_state = SENDING_CONSIGNE;
                         break;
                     case CMD_PUT_CONSIGNE:
                         printf("USB: Got send consigne\n");
@@ -81,12 +109,16 @@ void nr_usb_tasks() {
     }
 
     switch(usb_state){
-        case SEND_STATUS:
+        case SENDING_STATUS:
             // Status requested by host
             mutex_enter_blocking(&usb_mutex);
-            //TODO: Implements a send_all function to ensure we send the complete data
-            ptr = (uint8_t*)&status_out;
-            nb_write = tud_vendor_write(ptr, sizeof(USB_STATUS_OUT));
+            tud_vendor_write_all(&status_out, sizeof(USB_STATUS_OUT));            
+            mutex_exit(&usb_mutex);
+            break;
+        case SENDING_CONSIGNE:
+            // Actual consigne requested by host
+            mutex_enter_blocking(&usb_mutex);
+            tud_vendor_write_all(&consigne_out, sizeof(USB_CONSIGNE_OUT));            
             mutex_exit(&usb_mutex);
             break;
         case RECEIVE_CONSIGNE:
@@ -131,11 +163,23 @@ void nr_usb_tasks() {
     }
 }
 
-void nr_usb_publish_state(NR_STATE state, NR_ERROR error, const Consigne* current_consigne) {
+void nr_usb_set_state(NR_STATE state) {
     mutex_enter_blocking(&usb_mutex);
     status_out.state = state;
+    mutex_exit(&usb_mutex);
+}
+
+void nr_usb_set_error(NR_ERROR error, const char* errMsg) {
+    mutex_enter_blocking(&usb_mutex);
     status_out.error = error;
-    memcpy(&status_out.consigne, current_consigne, sizeof(Consigne));
-    nb_write = 0;
+    strlcat(status_out.errorMsg, errMsg, sizeof(status_out.errorMsg));
+    mutex_exit(&usb_mutex);
+}
+
+void nr_usb_set_consigne(uint8_t peer,  uint8_t exchange_num, const Consigne* consigne) {
+    mutex_enter_blocking(&usb_mutex);
+    consigne_out.peer = peer;
+    consigne_out.exchange_num = exchange_num;
+    memcpy(&consigne_out.consigne, consigne, sizeof(consigne_out.consigne));
     mutex_exit(&usb_mutex);
 }
