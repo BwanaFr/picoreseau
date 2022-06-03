@@ -10,6 +10,7 @@
  * USB commands to receive
  **/
 enum USB_CMD{
+    CMD_GET_STATUS,             // Gets device status
     CMD_PUT_CONSIGNE,           // Sends a consigne
     CMD_GET_DATA,               // Receive data
     CMD_PUT_DATA,               // Send data
@@ -21,6 +22,7 @@ enum USB_CMD{
  **/
 enum USB_STATE{
     IDLE,                   // Monitors USB for data RX
+    SEND_STATUS,            // Sends status to USB
     SENDING_CONSIGNE,       // Sends consigne to USB
     SENDING_DATA_HEADER,    // Sends data header to USB (before sending data chunk)
     SENDING_DATA,           // Sends data received from Nanoreseau to USB

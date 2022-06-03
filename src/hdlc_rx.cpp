@@ -21,12 +21,15 @@ uint32_t rxBufferMaxLen = 0;    // Maximum length of buffer
 uint8_t rcvAddress = 0;         // Our expected address on the bus
 
 uint8_t destAddress = 0xFF;     // Address read on frame
-static volatile uint32_t crc[3] = {0, 0, 0};  // CRC at current byte, -1 ,2
-static volatile uint32_t rxCount = 0;       // Number of received bytes
-static volatile bool rxCompleted = false;   // RX completed
-static volatile bool skipData = false;      // Skip this frame
-static bool firstUse = true;                // First use of the receiveData function
-static absolute_time_t timeOut = 0;         // Timeout timestamp
+static volatile uint16_t dma_crc[3] = {0, 0, 0};    // CRC from DMA sniffer at current byte, -1 ,2
+static volatile uint8_t data_crc[2] = {0,0};        // Last two bytes of received data for CRC computation
+static volatile uint32_t rxCount = 0;               // Number of received bytes
+static volatile bool rxCompleted = false;           // RX completed
+static volatile bool skipData = false;              // Skip this frame
+static bool firstUse = true;                        // First use of the receiveData function
+static absolute_time_t timeOut = 0;                 // Timeout timestamp
+
+static uint8_t tmp = 0;
 
 #define USE_ABORT
 
@@ -83,9 +86,9 @@ void __isr __time_critical_func(rx_dma_isr)() {
     if(dma_channel_get_irq1_status(rxDMAChannel)){
         dma_channel_acknowledge_irq1(rxDMAChannel);
         //Keep latest 3 CRC
-        crc[2] = crc[1];
-        crc[1] = crc[0];
-        crc[0] = dma_hw->sniff_data;
+        dma_crc[2] = dma_crc[1];
+        dma_crc[1] = dma_crc[0];
+        dma_crc[0] = (dma_hw->sniff_data >> 16) & 0xFFFF;
         //First transfer done on destAddress
         if(dma_channel_hw_addr(rxDMAChannel)->write_addr == (uintptr_t)&destAddress){
             //Enable the PIO interrupt 0 to get notified when transfer is done
@@ -95,21 +98,36 @@ void __isr __time_critical_func(rx_dma_isr)() {
 #endif
             pio_interrupt_clear(rxPIO, 1);
             pio_set_irq0_source_enabled(rxPIO, pis_interrupt1, true);
+            data_crc[1] = destAddress;
             if(destAddress != rcvAddress){
                 //Address don't match, skip all data
                 skipData = true;
             }else{
                 gpio_put(PICO_DEFAULT_LED_PIN, true);
                 skipData = false;
+                rxCount = 0;
                 //Receive data in real buffer
                 dma_channel_set_write_addr(rxDMAChannel, rxBuffer, true);
             }
-        }else if(!skipData && (++rxCount < rxBufferMaxLen)) {
-            //Start another transfer (buffer is big enough)
-            dma_channel_set_write_addr(rxDMAChannel, &rxBuffer[rxCount], true);
-        }else{
-            //Continue to empty buffer
-            dma_channel_set_write_addr(rxDMAChannel, NULL, true);
+        }else if(skipData){
+            // Continue to clear the FIFO using DMA
+            dma_channel_set_write_addr(rxDMAChannel, nullptr, true);
+        }else if(rxCount < rxBufferMaxLen) {
+            data_crc[0] = data_crc[1];
+            data_crc[1] = rxBuffer[rxCount];
+            ++rxCount;
+            if(rxCount < rxBufferMaxLen) {
+                //Start another transfer (buffer is big enough)
+                dma_channel_set_write_addr(rxDMAChannel, &rxBuffer[rxCount], true);
+            }else{
+                //Transfer to CRC buffer
+                dma_channel_set_write_addr(rxDMAChannel, &tmp, true);
+            }
+        }else if(dma_channel_hw_addr(rxDMAChannel)->write_addr == (uintptr_t)&tmp){
+            ++rxCount;
+            data_crc[0] = data_crc[1];
+            data_crc[1] = tmp;
+            dma_channel_set_write_addr(rxDMAChannel, &tmp, true);
         }
     }
 }
@@ -188,17 +206,21 @@ receiver_status receiveHDLCData(uint8_t address, uint8_t* buffer, uint32_t bufLe
         firstUse = false;
     }
     receiver_status ret = busy;
-    if(rxCompleted){    
-        if(rxCount > 3){
-            // We received enough data for a valid HDLC frame        
-            uint32_t crcCheck = crc[2];
-            if((((crcCheck>>16) & 0xFF) == buffer[rxCount-2]) &&
-                (((crcCheck>>24) & 0xFF) == buffer[rxCount-1])){
-                    ret = done;
+    if(rxCompleted){
+        if(rxCount > 1){
+            // We received enough data for a valid HDLC frame
+            // data + CRC     
+            uint16_t crcDMACheck = dma_crc[2];
+            uint16_t crcDataCheck = (data_crc[1]<<8) | data_crc[0];
+            if(crcDMACheck == crcDataCheck){
+                ret = done;
             }else{
                 ret = bad_crc;
             }
             rcvLen = rxCount - 2;
+            if(rcvLen > rxBufferMaxLen){
+                rcvLen = rxBufferMaxLen;
+            }
         }else{
             rcvLen = 0;
             ret = frame_short;

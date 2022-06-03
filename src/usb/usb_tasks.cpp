@@ -7,11 +7,11 @@
 #include "pico/time.h"
 
 #pragma pack (1)
-typedef struct USB_DATA_OUT {
+typedef struct USB_STATUS_OUT {
     uint8_t state;
     uint8_t error;
     Consigne consigne;
-}USB_DATA_OUT;
+}USB_STATUS_OUT;
 
 typedef struct USB_DATA_IN {
     uint8_t cmd;
@@ -25,9 +25,8 @@ typedef struct USB_DATA_IN {
 
 static USB_STATE usb_state = IDLE;
 static USB_DATA_IN data_in;
-static USB_DATA_OUT data_out;
+static USB_STATUS_OUT status_out;
 static uint nb_write = 0;
-static bool send_data = false;
 auto_init_mutex(usb_mutex);
 uint8_t usb_buffer[65535];
 
@@ -41,35 +40,54 @@ void nr_usb_init() {
 }
 
 void nr_usb_tasks() {
+    uint8_t* ptr = nullptr;
     //TODO: Check if USB is mounted using tud_vendor_mounted
     tud_task();
 
-    switch(usb_state){
-        case IDLE:
-            if(tud_vendor_available()){
-                // Reads command received on USB
-                uint32_t r = tud_vendor_read(&data_in, 1);
-                if(r == 1){
-                    switch(data_in.cmd){
-                        case CMD_PUT_CONSIGNE:
-                            printf("USB: Got send consigne\n");
-                            usb_state = RECEIVE_CONSIGNE;
-                            break;
-                        case CMD_PUT_DATA:
-                            printf("USB: Put data\n");
-                            usb_state = RECEIVE_DATA;
-                            break;
-                        case CMD_GET_DATA:
-                            printf("USB: Gut data\n");
-                            usb_state = SENDING_DATA_HEADER;
-                            break;
-                        case CMD_DISCONNECT:
-                            printf("Disconnect\n");
-                            usb_state = SENDING_DISCONNECT;
-                            break;
-                    }
+    if(usb_state == IDLE){
+        if(tud_vendor_available()){
+            // Reads command received on USB
+            uint32_t r = tud_vendor_read(&data_in, 1);
+            if(r == 1){
+                switch(data_in.cmd){
+                    case CMD_GET_STATUS:
+                        usb_state = SEND_STATUS;
+                        break;
+                    case CMD_PUT_CONSIGNE:
+                        printf("USB: Got send consigne\n");
+                        usb_state = RECEIVE_CONSIGNE;
+                        break;
+                    case CMD_PUT_DATA:
+                        printf("USB: Put data\n");
+                        usb_state = RECEIVE_DATA;
+                        break;
+                    case CMD_GET_DATA:
+                        printf("USB: Get data\n");
+                        usb_state = SENDING_DATA_HEADER;
+                        break;
+                    case CMD_DISCONNECT:
+                        printf("Disconnect\n");
+                        usb_state = SENDING_DISCONNECT;
+                        break;
+                    default:
+                        // Here, we lost sync.
+                        printf("Unsupported command!\n");
                 }
             }
+        }else{
+            //No command received yet
+            return;
+        }
+    }
+
+    switch(usb_state){
+        case SEND_STATUS:
+            // Status requested by host
+            mutex_enter_blocking(&usb_mutex);
+            //TODO: Implements a send_all function to ensure we send the complete data
+            ptr = (uint8_t*)&status_out;
+            nb_write = tud_vendor_write(ptr, sizeof(USB_STATUS_OUT));
+            mutex_exit(&usb_mutex);
             break;
         case RECEIVE_CONSIGNE:
             if(tud_vendor_available()){
@@ -108,26 +126,16 @@ void nr_usb_tasks() {
                 usb_state = IDLE;
             }
             break;
+        default:
+            break;
     }
-    /*mutex_enter_blocking(&usb_mutex);
-    if(send_data){
-        uint8_t* ptr = (uint8_t*)&data_out;
-        ptr += nb_write;
-        nb_write = tud_vendor_write(ptr, sizeof(USB_DATA_OUT)-nb_write);
-        if(nb_write>= sizeof(USB_DATA_OUT)){
-            printf("%lu ", tud_vendor_write_available());
-            send_data = false;
-        }
-    }
-    mutex_exit(&usb_mutex);*/
 }
 
 void nr_usb_publish_state(NR_STATE state, NR_ERROR error, const Consigne* current_consigne) {
     mutex_enter_blocking(&usb_mutex);
-    data_out.state = state;
-    data_out.error = error;
-    memcpy(&data_out.consigne, current_consigne, sizeof(Consigne));
-    nb_write = 0;    
-    send_data = true;
+    status_out.state = state;
+    status_out.error = error;
+    memcpy(&status_out.consigne, current_consigne, sizeof(Consigne));
+    nb_write = 0;
     mutex_exit(&usb_mutex);
 }
