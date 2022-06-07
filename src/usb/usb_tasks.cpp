@@ -48,6 +48,7 @@ void nr_usb_init() {
     // Initializes structures
     memset(&status_out, 0, sizeof(status_out));
     memset(&consigne_out, 0, sizeof(consigne_out));
+    strcpy(status_out.errorMsg, "No error");
 }
 
 /**
@@ -94,7 +95,6 @@ void nr_usb_tasks() {
                         usb_state = SENDING_DATA_HEADER;
                         break;
                     case CMD_DISCONNECT:
-                        printf("Disconnect\n");
                         usb_state = SENDING_DISCONNECT;
                         break;
                     default:
@@ -114,12 +114,15 @@ void nr_usb_tasks() {
             mutex_enter_blocking(&usb_mutex);
             tud_vendor_write_all(&status_out, sizeof(USB_STATUS_OUT));            
             mutex_exit(&usb_mutex);
+            usb_state = IDLE;
             break;
         case SENDING_CONSIGNE:
             // Actual consigne requested by host
             mutex_enter_blocking(&usb_mutex);
             tud_vendor_write_all(&consigne_out, sizeof(USB_CONSIGNE_OUT));            
             mutex_exit(&usb_mutex);
+            usb_state = IDLE;
+            set_nr_state(NR_IDLE);
             break;
         case RECEIVE_CONSIGNE:
             if(tud_vendor_available()){
@@ -158,7 +161,14 @@ void nr_usb_tasks() {
                 usb_state = IDLE;
             }
             break;
+        case SENDING_DISCONNECT:
+            uint32_t lenRx = tud_vendor_read(&data_in.cmd_payload.address, sizeof(data_in.cmd_payload.address));
+            printf("Disconnecting %u\n", data_in.cmd_payload.address);
+            
+            usb_state = IDLE;
+            break;
         default:
+            usb_state = IDLE;
             break;
     }
 }
@@ -172,7 +182,8 @@ void nr_usb_set_state(NR_STATE state) {
 void nr_usb_set_error(NR_ERROR error, const char* errMsg) {
     mutex_enter_blocking(&usb_mutex);
     status_out.error = error;
-    strlcat(status_out.errorMsg, errMsg, sizeof(status_out.errorMsg));
+    memset(status_out.errorMsg, 0, sizeof(status_out.errorMsg));
+    strlcpy(status_out.errorMsg, errMsg, sizeof(status_out.errorMsg));
     mutex_exit(&usb_mutex);
 }
 

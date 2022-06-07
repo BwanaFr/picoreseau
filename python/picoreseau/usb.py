@@ -45,3 +45,4 @@ class USBCommand:
             ret = bytearray(struct.calcsize('B'))
             struct.pack_into('B', ret, 0, self.cmd)
         return ret
+

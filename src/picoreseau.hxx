@@ -21,10 +21,12 @@ enum NR_STATE{
 enum NR_ERROR{
     NO_ERROR,
     TIMEOUT,
+    SHORT_FRAME,
 };
 
 //Control words
 enum CTRL_WORD {
+    MCNONE  = 0b00000000,     // None
     MCVR    = 0b10000000,     // Vas-y recois
     MCPCH   = 0b10010000,     // Prise en charge
     MCAMA   = 0b10100000,     // Avis de mise en attente
@@ -57,6 +59,8 @@ typedef struct Consigne {
     ConsigneData data;      // Consigne data
 }Consigne;
 
+#define DEFAULT_RX_TIMEOUT  2000    // RX timeout in microseconds
+#define SEND_CTRL_RETRIES 5         // Number of times to try to resend the control word on bus
 
 /**
  * Waits for a 3 bytes specified control word
@@ -69,9 +73,23 @@ typedef struct Consigne {
 receiver_status wait_for_ctrl(uint8_t& payload, uint8_t& caller, CTRL_WORD expected = MCAPI, uint64_t timeout=0);
 
 /**
+ * Sends a control word to the specified peer and waits for reply
+ * @param to Peer to send the control word to
+ * @param ctrl Control word to send
+ * @param payload LSB of the control word byte (probably message number)
+ * @param expected Expected response, MCNONE if no response expected
+ * @param timeout Response timeout, taken into account only if expected != MCNONE
+ * @param retries Number of time to retry to send the message
+ * @return status of the receiver
+ * */
+receiver_status send_ctrl(uint8_t to, CTRL_WORD ctrl, uint8_t& payload, CTRL_WORD expected=MCNONE, 
+                            uint64_t timeout=DEFAULT_RX_TIMEOUT, uint32_t retries=SEND_CTRL_RETRIES);
+
+/**
  * Sends a disconnect request to the station
+ * @param peer Station ID to disconnect
  **/
-void send_nr_disconnect();
+void send_nr_disconnect(uint8_t peer);
 
 /**
  * Sends a consigne to a device (called from USB functions)
@@ -81,5 +99,9 @@ void send_nr_disconnect();
  **/
 void send_consigne(const Consigne* consigne);
 
+/**
+ * Sets the main state machine state
+ **/
+void set_nr_state(NR_STATE state);
 
 #endif

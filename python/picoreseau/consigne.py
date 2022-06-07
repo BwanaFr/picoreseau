@@ -1,4 +1,5 @@
 import struct
+import logging
 
 class Consigne:
     """
@@ -27,9 +28,32 @@ class Consigne:
     ctx_data : bytes
         Context dependant data. Up to 51 bytes.
     """
+    # typedef struct ConsigneData {
+    #     uint8_t code_tache;     // Code tache reseau (start of command RX)
+    #     uint8_t code_app;       // Code tache application 
+    #     uint16_t msg_len;       // Nombre d'ocets du message
+    #     uint8_t page;           // Page
+    #     uint16_t msg_addr;      // Message adresse
+    #     uint8_t ordinateur;     // Ordinateur (0 : TO7, 1 : MO5, 2: TO7/70)
+    #     uint8_t application;    // Application (0 : Unknown, 1 : Basic 1.0, 2 : LOGO, 3 : LSE)
+    #     uint8_t ctx_data[51];   // Context dependant bytes
+    # }ConsigneData;
 
-    CONSIGNE_HEADER = '>BBBHBHBB'
+    # //Nanoreseau consigne with meta-data
+    # #pragma pack (1)
+    # typedef struct Consigne {
+    #     uint8_t length;         // Longueur de la consigne
+    #     uint8_t dest;           // Destinataire
+    #     ConsigneData data;      // Consigne data
+    # }Consigne;
+
+    CONSIGNE_HEADER = '>BBBBHBHBB'
     CONSIGNE_HEADER_SIZE = struct.calcsize(CONSIGNE_HEADER)
+
+    CONSIGNE_CONTEXT_DATA_SIZE = 51
+    CONSIGNE_SIZE = CONSIGNE_HEADER_SIZE + CONSIGNE_CONTEXT_DATA_SIZE
+
+    logger = logging.getLogger("Consigne")
 
     def __init__(self, src=None):
         """
@@ -45,7 +69,7 @@ class Consigne:
         self.computer = 0
         self.application = 0
         self.ctx_data = bytearray(0)
-        if src:
+        if src:            
             self.from_bytes(src)
 
     def from_bytes(self, b):
@@ -69,26 +93,26 @@ class Consigne:
         # uint8_t ordinateur;     // Ordinateur (0 : TO7, 1 : MO5, 2: TO7/70)
         # uint8_t application;    // Application (0 : Unknown, 1 : Basic 1.0, 2 : LOGO, 3 : LSE)
         # uint8_t ctx_data[51];   // Context dependant bytes
-        self.length = struct.unpack_from('>B', b)
-        vals = struct.unpack_from(self.CONSIGNE_HEADER, b, 1)
-        self.dest = vals[0]
-        self.code_tache = vals[1]
-        self.code_app = vals[2]
-        self.msg_len = vals[3]
-        self.page = vals[4]
-        self.msg_addr = vals[5]
-        self.computer = vals[6]
-        self.application = vals[7]
-        self.ctx_data = b[self.CONSIGNE_HEADER_SIZE + 1:]
+        Consigne.logger.debug(f'Unpacking consigne from a {len(b)} bytes array')
+        self.length, \
+        self.dest, \
+        self.code_tache, \
+        self.code_app, \
+        self.msg_len, \
+        self.page, \
+        self.msg_addr, \
+        self.computer, \
+        self.application = struct.unpack_from(self.CONSIGNE_HEADER, b)
+        self.ctx_data = b[self.CONSIGNE_HEADER_SIZE:]
 
     def to_bytes(self):
         # Consigne length is always a multiple of 4
         length = (((self.CONSIGNE_HEADER_SIZE + len(self.ctx_data)) % 4) + 1) * 4
-        ret = bytearray(length + 1)             # Adds one byte for consigne length
-        struct.pack_into('>B', ret, 0, length)  # Sets lenght of consigne
+        ret = bytearray(length)             # Adds one byte for consigne length
         print(f'Consigne len : {length}')
         # Append consigne structure to our bytearray
-        struct.pack_into(self.CONSIGNE_HEADER, ret, 1,
+        struct.pack_into(self.CONSIGNE_HEADER, ret, 0,
+                        length,
                         self.dest,
                         self.code_tache,
                         self.code_app,
@@ -97,7 +121,7 @@ class Consigne:
                         self.msg_addr,
                         self.computer,
                         self.application)
-        ctx_offset = self.CONSIGNE_HEADER_SIZE + 1
+        ctx_offset = self.CONSIGNE_HEADER_SIZE
         # Insert context data in the buffer
         ret[ctx_offset:ctx_offset+len(self.ctx_data)] = self.ctx_data
         return ret

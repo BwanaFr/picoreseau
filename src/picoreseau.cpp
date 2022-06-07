@@ -27,13 +27,13 @@
 
 #define DEV_NUMBER 0x0              // Device address on BUS (0 for master)
 #define PCH_RETRIES 5               // Number of retries to send PCH
-#define DEFAULT_RX_TIMEOUT  1000    // RX timeout in microseconds
-
 
 uint8_t buffer[65535];
 NR_STATE nr_state = NR_IDLE;
 NR_ERROR nr_error = NO_ERROR;
 Consigne current_consigne;
+
+uint8_t disconnect_peer = 0;
 
 /**
  * Dumps current config to sdio
@@ -111,6 +111,41 @@ receiver_status wait_for_ctrl(uint8_t& payload, uint8_t& caller, CTRL_WORD expec
 }
 
 /**
+ * Sends a control word
+ **/
+receiver_status send_ctrl(uint8_t to, CTRL_WORD ctrl, uint8_t& payload, CTRL_WORD expected, uint64_t timeout, uint32_t retries) {
+    enum InternalState {SEND_DATA, WAIT_RESPONSE};
+    static InternalState internalState = SEND_DATA;
+    static uint32_t retriesCount = 0;
+    receiver_status ret = busy;
+    switch(internalState){
+        case SEND_DATA:
+            // Sends the acknowledge
+            uint8_t pl[3];
+            pl[0] = to;
+            pl[1] = ctrl | (payload & 0xFF);
+            pl[2] = DEV_NUMBER;
+            //TODO: Maybe timeout if bus is busy for too long
+            sendData(pl, sizeof(pl));
+            if(expected == MCNONE){
+                ret = done;
+            }else{
+                ret = busy;
+                internalState = WAIT_RESPONSE;                
+            }
+            break;
+        case WAIT_RESPONSE:
+            //TODO: Checks if this response comes from the one expected and send back the payload
+            ret = wait_for_ctrl(payload, to, expected, timeout);
+            if(ret != busy){
+                internalState = SEND_DATA;
+            }
+            break;
+    }
+    return ret;
+}
+
+/**
  * Core 1 entry for running USB tasks
  **/
  void core1_entry() {
@@ -136,6 +171,7 @@ void handle_state_idle() {
     uint32_t nbBytes = 0;                       //Number of bytes in initial call
     receiver_status status = bad_crc;           //HDLC receiver status
     InternalState nextState = internalState;    //Next state to take into account
+    int64_t elapsed = 0;                        //Time elapsed 
     switch (internalState)
     {
     case WAIT_SELECT:
@@ -144,7 +180,7 @@ void handle_state_idle() {
             nr_usb_set_error(NO_ERROR, "");
             // Got select
             consigneBytes = consigneBytes * 4;
-            printf("Appel initial de %u with a %u bytes consigne\n", from, consigneBytes);
+            // printf("Appel initial de %u with a %u bytes consigne\n", from, consigneBytes);
             // Send echo by outputing a clock
             // TODO: Maybe make this non-blocking too?
             wait_for_no_clock();
@@ -168,14 +204,16 @@ void handle_state_idle() {
                 //Checks if the control word is 0 and the frame is received from our peer
                 // if not, simply ignore we will timeout anyway
                 if(((buffer[0] & 0xF0) == 0x0) && (buffer[1] == from)){
+                    //TODO: Checks this, consigneBytes can be 2 bytes less
                     if(nbBytes < consigneBytes){
-                        printf("Received %lu bytes, expecting %u", nbBytes, consigneBytes);
+                        // printf("Received %lu bytes, expecting %u", nbBytes, consigneBytes);
+                        nr_usb_set_error(SHORT_FRAME, "Command data too short");
                         nextState = ERROR;
                         break;
                     }else{
-                        printf("Command frame is %lu long\n", nbBytes);
                         buffer_to_consigne(buffer, &current_consigne, consigneBytes);
                         nextState = ACK;
+                        break;
                     }
                 }
             }
@@ -192,7 +230,10 @@ void handle_state_idle() {
         nextState = WAIT_IDLE;
         break;
     case WAIT_IDLE:
-        if(absolute_time_diff_us(lastStateChange, get_absolute_time()) >= DEFAULT_RX_TIMEOUT){
+        elapsed = absolute_time_diff_us(lastStateChange, get_absolute_time());
+        if(elapsed >= DEFAULT_RX_TIMEOUT){
+            //TODO: Retry to send acknowledge
+            printf("MCAMA RX timeout (%lldusec)\n", elapsed);
             nr_usb_set_error(TIMEOUT, "MCAMA rx timeout");
             resetReceiverState();
             nextState = ERROR;
@@ -205,6 +246,8 @@ void handle_state_idle() {
                     // Got select
                     printf("Avis de mise en attente de %u (msg num : %x)\n", from, msg_num);
                     nextState = WAIT_SELECT;
+                    set_nr_state(NR_SELECTED);
+                    nr_usb_set_consigne(from, msg_num, &current_consigne);
                     dump_current_consigne();
                 }
             }
@@ -225,6 +268,28 @@ void handle_state_idle() {
         lastStateChange = get_absolute_time();
         internalState = nextState;
     }
+}
+
+void handle_state_disconnect() {
+    enum InternalState {SEND_DISCO, WAIT_EOT};
+    static InternalState internalState = SEND_DISCO;
+    static absolute_time_t lastStateChange = 0;
+    InternalState nextState = internalState;
+
+    switch(internalState){
+        case SEND_DISCO:
+
+    }
+}
+
+void set_nr_state(NR_STATE state) {
+    nr_state = state;
+    nr_usb_set_state(nr_state);
+}
+
+void send_nr_disconnect(uint8_t peer) {
+    disconnect_peer = peer;
+    set_nr_state(NR_DISCONNECT);
 }
 
 /**
