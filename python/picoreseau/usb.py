@@ -15,6 +15,10 @@ class USBCommand:
     def __init__(self, **kwargs):
         self.payload = None
         self.cmd = None
+        if "get_status" in kwargs:
+            self.cmd = USBCommand.CMD_GET_STATUS
+        if "get_consigne" in kwargs:
+            self.cmd = USBCommand.CMD_GET_CONSIGNE
         if "consigne" in kwargs:
             self.cmd = USBCommand.CMD_PUT_CONSIGNE
             self.payload = kwargs["consigne"].to_bytes()
@@ -32,9 +36,12 @@ class USBCommand:
             self.payload = struct.pack('B', kwargs["disconnect"])
     
     def to_bytes(self):
-        ret = bytearray(struct.calcsize('B') + len(self.payload))
-        print(f'Payload size is {len(self.payload)}')
-        struct.pack_into('B', ret, 0, self.cmd)
-        ret[struct.calcsize('B'):] = self.payload
-        print(ret)
+        ret = None
+        if self.payload:
+            ret = bytearray(struct.calcsize('B') + len(self.payload))
+            struct.pack_into('B', ret, 0, self.cmd)
+            ret[struct.calcsize('B'):] = self.payload
+        else:
+            ret = bytearray(struct.calcsize('B'))
+            struct.pack_into('B', ret, 0, self.cmd)
         return ret
