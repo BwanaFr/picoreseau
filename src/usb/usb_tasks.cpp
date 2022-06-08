@@ -20,19 +20,7 @@ typedef struct USB_CONSIGNE_OUT {
     Consigne consigne;          // Consigne data
 }USB_CONSIGNE_OUT;
 
-#pragma pack (1)
-typedef struct USB_DATA_IN {
-    uint8_t cmd;
-    union cmd_payload
-    {
-        uint8_t address;    // Address to disconnect
-        uint16_t rx_tx_len; // Lenght of data to send/receive
-        Consigne consigne;  // Consigne to be received
-    }cmd_payload;
-}USB_DATA_IN;
-
 static USB_STATE usb_state = IDLE;
-static USB_DATA_IN data_in;
 static USB_STATUS_OUT status_out;
 static USB_CONSIGNE_OUT consigne_out;
 auto_init_mutex(usb_mutex);
@@ -73,9 +61,10 @@ void nr_usb_tasks() {
         // Check is a command is received
         if(tud_vendor_available()){
             // Reads command received on USB
-            uint32_t r = tud_vendor_read(&data_in, 1);
-            if(r == 1){
-                switch(data_in.cmd){
+            uint8_t cmd = 0;
+            uint32_t r = tud_vendor_read(&cmd, sizeof(cmd));
+            if(r == sizeof(cmd)){
+                switch(cmd){
                     case CMD_GET_STATUS:
                         usb_state = SENDING_STATUS;
                         break;
@@ -107,7 +96,7 @@ void nr_usb_tasks() {
             return;
         }
     }
-
+    uint32_t lenRx = 0;
     switch(usb_state){
         case SENDING_STATUS:
             // Status requested by host
@@ -126,27 +115,28 @@ void nr_usb_tasks() {
             break;
         case RECEIVE_CONSIGNE:
             if(tud_vendor_available()){
-                //Gets consigne lenght
-                tud_vendor_read(&data_in.cmd_payload.consigne.length, sizeof(data_in.cmd_payload.consigne.length));                
+                //Gets message number
+                uint8_t msg_num = 0;
+                tud_vendor_read(&msg_num, sizeof(msg_num));
+                Consigne rxConsigne;
+                memset(&rxConsigne, 0, sizeof(rxConsigne));
+                //Gets consigne length
+                tud_vendor_read(&rxConsigne.length, sizeof(rxConsigne.length));                
                 //Read consigne bytes
-                uint32_t r = tud_vendor_read(&data_in.cmd_payload.consigne.dest, 
-                                    sizeof(data_in.cmd_payload.consigne) - sizeof(data_in.cmd_payload.consigne.length));
-                printf("Read %lu/%u\n", r, data_in.cmd_payload.consigne.length);
-                if(r>1){
-                    if(r == data_in.cmd_payload.consigne.length) {
-                        printf("Received complete consigne!\n");
-                        usb_state = IDLE;
-                    }
-                }
+                uint32_t r = tud_vendor_read(&rxConsigne.dest, rxConsigne.length + sizeof(rxConsigne.dest));
+                printf("Read %lu/%u\n", r, rxConsigne.length);
+                send_nr_consigne(&rxConsigne);
             }
+            usb_state = IDLE;
             break;
         case RECEIVE_DATA:
             //Prepare to receive data on USB
             if(tud_vendor_available()){
                 //Gets number of following bytes
-                uint32_t lenRx = tud_vendor_read(&data_in.cmd_payload.rx_tx_len, sizeof(data_in.cmd_payload.rx_tx_len));
-                printf("Will receive %u/%lu bytes\n", data_in.cmd_payload.rx_tx_len, lenRx);
-                int32_t rx_len = data_in.cmd_payload.rx_tx_len;
+                uint16_t rx_tx_len = 0;
+                lenRx = tud_vendor_read(&rx_tx_len, sizeof(rx_tx_len));
+                printf("Will receive %u/%lu bytes\n", rx_tx_len, lenRx);
+                int32_t rx_len = rx_tx_len;
                 absolute_time_t start = get_absolute_time();
                 while(rx_len>0){
                     if(tud_vendor_available()) {
@@ -156,15 +146,16 @@ void nr_usb_tasks() {
                     tud_task();
                 }
                 int64_t elapsed_us = absolute_time_diff_us(start, get_absolute_time());
-                double speed = (data_in.cmd_payload.rx_tx_len * (1000000.0/elapsed_us)) / 1024.0;
+                double speed = (rx_tx_len * (1000000.0/elapsed_us)) / 1024.0;
                 printf("RX completed in %lldus (%fkB/s)\n", elapsed_us, speed);
                 usb_state = IDLE;
             }
             break;
         case SENDING_DISCONNECT:
-            uint32_t lenRx = tud_vendor_read(&data_in.cmd_payload.address, sizeof(data_in.cmd_payload.address));
-            printf("Disconnecting %u\n", data_in.cmd_payload.address);
-            
+            uint8_t cmd[2]; //Two bytes, one for peer, next for msg_num
+            lenRx = tud_vendor_read(cmd, sizeof(cmd));
+            printf("Disconnecting %u\n", cmd[0]);
+            send_nr_disconnect(cmd[0], cmd[1]);
             usb_state = IDLE;
             break;
         default:

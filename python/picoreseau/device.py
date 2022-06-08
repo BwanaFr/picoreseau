@@ -67,19 +67,48 @@ class PicoreseauDevice(Thread):
             if status_code != last_status:
                 last_status = status_code
                 self.logger.debug(f'New status : {str(status)}')
+                if status_code == 0:    
+                    sleep(10)
+                    c = Consigne()
+                    c.dest = 2
+                    self.send_consigne(c, 1)
                 if self.__status_cb__:
                     self.__status_cb__(status_code, error_code, error_msg)
                 if status_code == 1:
                     consigne, peer, msg_num = status.get_consigne()
                     self.logger.debug(f'New command from {peer} msg #{msg_num}: {str(consigne)}')
                     self.logger.debug(consigne.ctx_data)
+                    
+
             if error_code != last_error:
                 last_error = error_code
                 self.logger.debug(f'New error : {str(status)}')
                 if self.__error_cb__:
                     self.__error_cb__(status_code, error_code, error_msg)
 
+    def disconnect_peer(self, peer):
+        """
+            Sends a request to disconnect specific peer
+        """
+        self.logger.debug(f'Disconnecting peer #{peer}')
+        cmd = USBCommand(disconnect=peer, msg_num=msg_num)
+        self.device.write(__EP_OUT__, cmd.to_bytes())
             
+    def send_consigne(self, consigne, msg_num):
+        """
+            Sends a consigne to a device
+            peer identifier is already in the consigne object
+
+            Parameters
+            ----------
+            consigne: Consigne
+                Nanoreseau consigne to send on the network
+            msg_num: int
+                Message number in the network frame
+        """
+        self.logger.debug(f'Sending consigne : {str(consigne)}')
+        cmd = USBCommand(consigne=consigne, msg_num=msg_num)
+        self.device.write(__EP_OUT__, cmd.to_bytes())
 
     @staticmethod
     def detect_device():

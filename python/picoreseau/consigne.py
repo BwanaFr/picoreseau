@@ -107,8 +107,13 @@ class Consigne:
 
     def to_bytes(self):
         # Consigne length is always a multiple of 4
-        length = (((self.CONSIGNE_HEADER_SIZE + len(self.ctx_data)) % 4) + 1) * 4
-        ret = bytearray(length)             # Adds one byte for consigne length
+        length = self.CONSIGNE_HEADER_SIZE - 2 + len(self.ctx_data)
+        print(f'Consigne size : {length}')
+        if length % 4 != 0:
+            length = int(length/4) + 1
+        else:
+            length = int(length/4)
+        ret = bytearray(length*4+2)             # Adds two bytes for len and dest
         print(f'Consigne len : {length}')
         # Append consigne structure to our bytearray
         struct.pack_into(self.CONSIGNE_HEADER, ret, 0,

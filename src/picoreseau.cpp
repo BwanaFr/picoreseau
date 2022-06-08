@@ -28,12 +28,13 @@
 #define DEV_NUMBER 0x0              // Device address on BUS (0 for master)
 #define PCH_RETRIES 5               // Number of retries to send PCH
 
-uint8_t buffer[65535];
-NR_STATE nr_state = NR_IDLE;
-NR_ERROR nr_error = NO_ERROR;
-Consigne current_consigne;
+static uint8_t buffer[65535];
+static NR_STATE nr_state = NR_IDLE;
+static NR_ERROR nr_error = NO_ERROR;
+static Consigne current_consigne;
 
-uint8_t disconnect_peer = 0;
+static uint8_t actual_peer = 0;
+static uint8_t actual_msg_num = 0;
 
 /**
  * Dumps current config to sdio
@@ -105,7 +106,7 @@ receiver_status wait_for_ctrl(uint8_t& payload, uint8_t& caller, CTRL_WORD expec
             //HDLC receiver error
             return ret;
         }
-    }while((timeout == 0) || (absolute_time_diff_us(stopTime, get_absolute_time()) > 0));
+    }while((timeout == 0) || (absolute_time_diff_us(get_absolute_time(), stopTime) > 0));
     //Here, a timeout occured
     return time_out;
 }
@@ -118,12 +119,13 @@ receiver_status send_ctrl(uint8_t to, CTRL_WORD ctrl, uint8_t& payload, CTRL_WOR
     static InternalState internalState = SEND_DATA;
     static uint32_t retriesCount = 0;
     receiver_status ret = busy;
+    uint8_t from = 0;
     switch(internalState){
         case SEND_DATA:
             // Sends the acknowledge
             uint8_t pl[3];
             pl[0] = to;
-            pl[1] = ctrl | (payload & 0xFF);
+            pl[1] = ctrl | (payload & 0xF);
             pl[2] = DEV_NUMBER;
             //TODO: Maybe timeout if bus is busy for too long
             sendData(pl, sizeof(pl));
@@ -131,14 +133,31 @@ receiver_status send_ctrl(uint8_t to, CTRL_WORD ctrl, uint8_t& payload, CTRL_WOR
                 ret = done;
             }else{
                 ret = busy;
+                retriesCount = 0;
                 internalState = WAIT_RESPONSE;                
             }
             break;
         case WAIT_RESPONSE:
-            //TODO: Checks if this response comes from the one expected and send back the payload
-            ret = wait_for_ctrl(payload, to, expected, timeout);
+            ret = wait_for_ctrl(payload, from, expected, timeout);
+            if(ret == done){
+                if(from == to){
+                    // Got answer we wanted
+                    internalState = SEND_DATA;
+                    retriesCount = 0;
+                    return ret;
+                }
+            }
             if(ret != busy){
+                // Receiver is not busy anymore
+                // Something not expected occured
                 internalState = SEND_DATA;
+                if(++retriesCount>=retries){
+                    ret = time_out;
+                    retriesCount = 0;                    
+                }else{
+                    //Still busy, try again
+                    ret = busy;
+                }
             }
             break;
     }
@@ -162,7 +181,7 @@ receiver_status send_ctrl(uint8_t to, CTRL_WORD ctrl, uint8_t& payload, CTRL_WOR
  * Handles when the device is IDLE
  **/
 void handle_state_idle() {
-    enum InternalState {WAIT_SELECT, GET_COMMAND, ACK, WAIT_IDLE, ERROR};
+    enum InternalState {WAIT_SELECT, GET_COMMAND, PCH, ERROR};
     static InternalState internalState = WAIT_SELECT;
     static uint8_t from = 0;
     static uint8_t consigneBytes = 0;
@@ -212,45 +231,31 @@ void handle_state_idle() {
                         break;
                     }else{
                         buffer_to_consigne(buffer, &current_consigne, consigneBytes);
-                        nextState = ACK;
+                        nextState = PCH;
                         break;
                     }
                 }
             }
         }
         break;
-    case ACK:
+    case PCH:
         // Sends the acknowledge
-        uint8_t ack[3];
-        ack[0] = from;
-        ack[1] = MCPCH; // Prise en charge
-        ack[2] = DEV_NUMBER;
-        //TODO: Maybe timeout if bus is busy for too long
-        sendData(ack, sizeof(ack));
-        nextState = WAIT_IDLE;
-        break;
-    case WAIT_IDLE:
-        elapsed = absolute_time_diff_us(lastStateChange, get_absolute_time());
-        if(elapsed >= DEFAULT_RX_TIMEOUT){
-            //TODO: Retry to send acknowledge
-            printf("MCAMA RX timeout (%lldusec)\n", elapsed);
+        {
+        actual_msg_num = 0;
+        status = send_ctrl(from, MCPCH, actual_msg_num, MCAMA);
+        if(status == done){
+            // Got select
+            printf("Avis de mise en attente de %u (msg num : %x)\n", from, actual_msg_num);
+            nextState = WAIT_SELECT;
+            set_nr_state(NR_SELECTED);
+            actual_peer = from;
+            nr_usb_set_consigne(from, actual_msg_num, &current_consigne);
+            dump_current_consigne();
+        }else if(status == time_out){
             nr_usb_set_error(TIMEOUT, "MCAMA rx timeout");
             resetReceiverState();
             nextState = ERROR;
-        }else{
-            status = receiveHDLCData(DEV_NUMBER, buffer, sizeof(buffer), nbBytes);
-            if((status == done) && (nbBytes == 2)){
-                uint8_t ctrlW = buffer[0] & 0xF0;
-                if(ctrlW == MCAMA){
-                    uint8_t msg_num = buffer[0] & 0xF;
-                    // Got select
-                    printf("Avis de mise en attente de %u (msg num : %x)\n", from, msg_num);
-                    nextState = WAIT_SELECT;
-                    set_nr_state(NR_SELECTED);
-                    nr_usb_set_consigne(from, msg_num, &current_consigne);
-                    dump_current_consigne();
-                }
-            }
+        }
         }
         break;
     default:
@@ -271,14 +276,9 @@ void handle_state_idle() {
 }
 
 void handle_state_disconnect() {
-    enum InternalState {SEND_DISCO, WAIT_EOT};
-    static InternalState internalState = SEND_DISCO;
-    static absolute_time_t lastStateChange = 0;
-    InternalState nextState = internalState;
-
-    switch(internalState){
-        case SEND_DISCO:
-
+    receiver_status status = send_ctrl(actual_peer, MCDISC, actual_msg_num, MCUA);
+    if(status == done){
+        set_nr_state(NR_IDLE);
     }
 }
 
@@ -287,10 +287,17 @@ void set_nr_state(NR_STATE state) {
     nr_usb_set_state(nr_state);
 }
 
-void send_nr_disconnect(uint8_t peer) {
-    disconnect_peer = peer;
+void send_nr_disconnect(uint8_t peer, uint8_t msg_num) {
+    actual_peer = peer;
+    actual_msg_num = msg_num;
     set_nr_state(NR_DISCONNECT);
 }
+
+void send_nr_consigne(const Consigne* consigne) {
+    memcpy(&current_consigne, consigne, sizeof(Consigne));
+    dump_current_consigne();
+}
+
 
 /**
  * Application main entry
@@ -326,6 +333,9 @@ int main() {
         {
         case NR_IDLE:
             handle_state_idle();
+            break;
+        case NR_DISCONNECT:
+            handle_state_disconnect();
             break;
         default:
             break;

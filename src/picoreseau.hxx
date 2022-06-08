@@ -88,8 +88,9 @@ receiver_status send_ctrl(uint8_t to, CTRL_WORD ctrl, uint8_t& payload, CTRL_WOR
 /**
  * Sends a disconnect request to the station
  * @param peer Station ID to disconnect
+ * @param msg_num Message number in the nanoreseau frame
  **/
-void send_nr_disconnect(uint8_t peer);
+void send_nr_disconnect(uint8_t peer, uint8_t msg_num);
 
 /**
  * Sends a consigne to a device (called from USB functions)
@@ -97,7 +98,7 @@ void send_nr_disconnect(uint8_t peer);
  * A MCAPA will be issued. Else, a line take request will be made.
  * 
  **/
-void send_consigne(const Consigne* consigne);
+void send_nr_consigne(const Consigne* consigne);
 
 /**
  * Sets the main state machine state
