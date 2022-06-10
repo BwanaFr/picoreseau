@@ -66,16 +66,19 @@ void nr_usb_tasks() {
             if(r == sizeof(cmd)){
                 switch(cmd){
                     case CMD_GET_STATUS:
+                        // Host wants to know device status
                         usb_state = SENDING_STATUS;
                         break;
                     case CMD_GET_CONSIGNE:
+                        // Host wants to get current consigne
                         usb_state = SENDING_CONSIGNE;
                         break;
                     case CMD_PUT_CONSIGNE:
-                        printf("USB: Got send consigne\n");
+                        // Host sends consigne to a peer
                         usb_state = RECEIVE_CONSIGNE;
                         break;
                     case CMD_PUT_DATA:
+                        // Host sends binary data to a peer
                         printf("USB: Put data\n");
                         usb_state = RECEIVE_DATA;
                         break;
@@ -114,17 +117,20 @@ void nr_usb_tasks() {
             set_nr_state(NR_IDLE);
             break;
         case RECEIVE_CONSIGNE:
+            // Consigne sent by host
             if(tud_vendor_available()){
                 //Gets message number
                 uint8_t msg_num = 0;
                 tud_vendor_read(&msg_num, sizeof(msg_num));
                 Consigne rxConsigne;
                 memset(&rxConsigne, 0, sizeof(rxConsigne));
-                //Gets consigne length
-                tud_vendor_read(&rxConsigne.length, sizeof(rxConsigne.length));                
+                //Gets consigne length and dest
+                tud_vendor_read(&rxConsigne.length, sizeof(rxConsigne.length) + sizeof(rxConsigne.dest));
+                //Consigne length is given with multiple of 4
+                uint32_t consigneLength = rxConsigne.length * 4;
                 //Read consigne bytes
-                uint32_t r = tud_vendor_read(&rxConsigne.dest, rxConsigne.length + sizeof(rxConsigne.dest));
-                printf("Read %lu/%u\n", r, rxConsigne.length);
+                uint32_t r = tud_vendor_read(&rxConsigne.data, consigneLength);
+                //Send consigne to nanoreseau
                 send_nr_consigne(&rxConsigne);
             }
             usb_state = IDLE;

@@ -1,5 +1,6 @@
 import logging
-from threading import Thread
+import threading
+import ctypes
 from time import sleep
 from queue import Queue
 import struct
@@ -11,7 +12,7 @@ from .usb import USBCommand
 __EP_OUT__ = 0x3    # Picoreseau data USB endpoint out
 __EP_IN__ = 0x83    # Picoreseau data USB endpoint in
 
-class PicoreseauDevice(Thread):
+class PicoreseauDevice(threading.Thread):
 
     logger = logging.getLogger("PicoreseauDevice")
     """
@@ -33,6 +34,7 @@ class PicoreseauDevice(Thread):
                 Device status polling interval in ms
         """
         super().__init__(daemon=False)
+        self.stopThread = False
         self.device = usb_device
         self.__status_cb__ = None
         self.__error_cb__ = None
@@ -53,6 +55,22 @@ class PicoreseauDevice(Thread):
         self.__status_cb__ = status_changed_cb
         self.__error_cb__ = error_change_cb
 
+    def stop(self):
+        thread_id = self.get_id()
+        res = ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id,
+              ctypes.py_object(SystemExit))
+        if res > 1:
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, 0)
+            print('Exception raise failure')
+
+    def get_id(self):
+        # returns id of the respective thread
+        if hasattr(self, '_thread_id'):
+            return self._thread_id
+        for id, thread in threading._active.items():
+            if thread is self:
+                return id
+
     def run(self):
         """
             Thread method
@@ -68,17 +86,21 @@ class PicoreseauDevice(Thread):
                 last_status = status_code
                 self.logger.debug(f'New status : {str(status)}')
                 if status_code == 0:    
-                    sleep(10)
-                    c = Consigne()
-                    c.dest = 2
-                    self.send_consigne(c, 1)
+                    sleep(1)
+                    # Test, send consigne
+                    # c = Consigne()
+                    # c.dest = 2
+                    # t = bytearray(41)
+                    # for i in range(len(t)):
+                    #     t[i] = i
+                    # c.ctx_data = t
+                    # self.send_consigne(c, 1)
                 if self.__status_cb__:
                     self.__status_cb__(status_code, error_code, error_msg)
                 if status_code == 1:
                     consigne, peer, msg_num = status.get_consigne()
                     self.logger.debug(f'New command from {peer} msg #{msg_num}: {str(consigne)}')
                     self.logger.debug(consigne.ctx_data)
-                    
 
             if error_code != last_error:
                 last_error = error_code
@@ -86,7 +108,7 @@ class PicoreseauDevice(Thread):
                 if self.__error_cb__:
                     self.__error_cb__(status_code, error_code, error_msg)
 
-    def disconnect_peer(self, peer):
+    def disconnect_peer(self, peer, msg_num):
         """
             Sends a request to disconnect specific peer
         """
@@ -220,3 +242,8 @@ if __name__ == "__main__":
     logging.getLogger().setLevel(logging.DEBUG)
     dev = PicoreseauDevice.detect_device()
     dev.start()
+    try:
+        while True:
+            sleep(1)
+    except KeyboardInterrupt:
+        dev.stop()

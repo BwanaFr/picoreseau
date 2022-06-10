@@ -24,10 +24,8 @@ class USBCommand:
             msg_num = 0
             if "msg_num" in kwargs:
                 msg_num = kwargs["msg_num"]
-            cons_bytes = kwargs["consigne"].to_bytes()
-            self.payload = bytearray(len(cons_bytes) + struct.calcsize('B'))
-            struct.pack_into('B', self.payload, 0, msg_num)
-            self.payload[1:] = cons_bytes
+            self.payload = bytearray(struct.pack('B', msg_num))
+            self.payload.extend(kwargs["consigne"].to_bytes())
         if "tx_data" in kwargs:
             # Send data to nanoreseau
             self.cmd = USBCommand.CMD_PUT_DATA
@@ -46,12 +44,8 @@ class USBCommand:
     
     def to_bytes(self):
         ret = None
+        ret = bytearray(struct.pack('B', self.cmd))
         if self.payload:
-            ret = bytearray(struct.calcsize('B') + len(self.payload))
-            struct.pack_into('B', ret, 0, self.cmd)
-            ret[struct.calcsize('B'):] = self.payload
-        else:
-            ret = bytearray(struct.calcsize('B'))
-            struct.pack_into('B', ret, 0, self.cmd)
+            ret.extend(self.payload)
         return ret
 
