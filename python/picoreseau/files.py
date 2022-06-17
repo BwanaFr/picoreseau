@@ -3,7 +3,7 @@ from datetime import date
 import os
 import sys
 from tabnanny import NannyNag
-
+import re
 
 class BinaryCode :
     """
@@ -237,18 +237,73 @@ class NanoreseauFile:
             self.binary_data = f.read()
 
     def __str__(self):
-        ret = f'File ID : {self.identifier} v{self.file_version_major}.{self.file_version_minor} {self.creation_date}, modified {self.modification_date} \
-           \nFile type : {self.get_file_type()} Status : {self.get_file_status()}'
+        ret = f'File ID : {self.identifier} v{self.file_version_major}.{self.file_version_minor} {self.creation_date}, modified {self.modification_date}' \
+           '\nFile type : {self.get_file_type()} Status : {self.get_file_status()}'
         if self.binary_data:
             ret += f'\n' + str(self.binary_data)
         return ret
 
+class NRConfigurationFile:
+    """
+        Class for loading a NR3.DATA configuration file
+    """
+    def __init__(self, file_path = None):
+        self.version = None
+        self.exit_file_name = None
+        self.printers = []
+        self.logical_disks = {}
+        self.listing_disk = None
+        self.system_byte = None
+        self.identifiers = {}
+        if file_path is not None:
+            self.open_file(file_path)
+
+    def __get_file_name(self, f, count):
+        p = re.compile('[a-zA-Z0-9 ]')
+        file = ''
+        for b in range(0,count):
+            try:
+                c = f.read(1).decode('utf-8')
+                if p.match(c):
+                    file += c 
+            except:
+                file += ' '
+        return file
+
+    def open_file(self, file_path):
+        f = open(file_path, 'rb')
+        self.version = f'{int.from_bytes(f.read(1), "little")}.{int.from_bytes(f.read(1), "little")}'
+        print(f'Configuration file version : {self.version}')
+        self.exit_file_name = self.__get_file_name(f, 9)
+        for i in range(0, 4):
+            self.printers.append(int.from_bytes(f.read(1), "little"))
+        for i in range(0, 10):
+            self.logical_disks[i] = int.from_bytes(f.read(1), "little")
+        self.listing_disk = int.from_bytes(f.read(1), "little")
+        self.system_byte = int.from_bytes(f.read(1), "little")
+        id_count = int.from_bytes(f.read(1), "little")
+        print(f'Got {id_count} identifiers')
+        p = re.compile('[a-zA-Z0-9 ]')
+        for i in range(0,id_count):
+            id = f.read(32)
+            file = self.__get_file_name(f, 12)
+            self.identifiers[id] = file
+
+    def __str__(self):
+        ret = f'Configuration file v{self.version} exit file: {self.exit_file_name}\n' \
+                'Identifiers:'
+        for id in self.identifiers:
+            ret += f'\n' + ''.join(f'{letter:02x}' for letter in id) + " -> " + self.identifiers[id]
+        return ret
+
+
+# For testing
 if __name__ == "__main__":
     f = None
     if len(sys.argv) > 1:
-        f = NanoreseauFile(sys.argv[1])
+        f = NRConfigurationFile(sys.argv[1])
     else:
-        f = NanoreseauFile("MENU.MO5")
+        f = NRConfigurationFile("MENU.MO5")
     print(str(f))
 
 
