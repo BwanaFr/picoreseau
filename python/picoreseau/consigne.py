@@ -53,6 +53,53 @@ class Consigne:
     CONSIGNE_CONTEXT_DATA_SIZE = 51
     CONSIGNE_SIZE = CONSIGNE_HEADER_SIZE + CONSIGNE_CONTEXT_DATA_SIZE
 
+    # List of known tasks codes
+    TC_INIT_CALL = 0    # Initialization request (for master), nop for slaves
+    TC_PUT_ON_HOLD = 1  # Mise en attente
+    TC_EXEC_CODE = 2    # Execute 6809 code on slave
+    TC_DISPLAY = 3      # Display on slave screen
+    TC_SEND_SCREEN = 4  # Get slave screen
+    TC_SEND_MEMORY = 5  # Send memory
+    TC_COPY_REPORT = 6  # Copy the report (compte-rendu)
+    TC_BASIC_1 = 7      # Used by basic 1.0
+    TC_FILE = 9         # File system
+    TC_PRINTER = 11     # Printer spooler
+
+    TASK_CODE = {
+        TC_INIT_CALL : 'Inital call/nop',
+        TC_PUT_ON_HOLD : 'On hold',
+        TC_EXEC_CODE : 'Execute code',
+        TC_DISPLAY : 'Display on slave',
+        TC_SEND_SCREEN : 'Send screen',
+        TC_SEND_MEMORY : 'Send memory',
+        TC_COPY_REPORT : 'Copy report',
+        TC_BASIC_1 : 'Basic 1.0',
+        TC_FILE : 'File',
+        TC_PRINTER : 'Printer',
+    }
+
+    COMPUTER_TO7 = 0
+    COMPUTER_MO5 = 1
+    COMPUTER_TO7_70 = 2
+
+    COMPUTER = {
+        COMPUTER_TO7 : 'TO7',
+        COMPUTER_MO5 : 'MO5',
+        COMPUTER_TO7_70 : 'TO7/70'
+    }
+
+    APPLICATION_UNSPEC = 0
+    APPLICATION_BASIC_1 = 1
+    APPLICATION_LOGO = 2
+    APPLICATION_LSE = 3
+
+    APPLICATION = {
+        APPLICATION_UNSPEC : 'Unspecified',
+        APPLICATION_BASIC_1 : 'Basic 1.0',
+        APPLICATION_LOGO : 'LOGO',
+        APPLICATION_LSE : 'LSE',
+    }
+
     logger = logging.getLogger("Consigne")
 
     def __init__(self, src=None):
@@ -130,6 +177,24 @@ class Consigne:
         ret.extend(bytearray(rem_bytes))
         return ret
     
+    @staticmethod
+    def get_enum_string(enum_def, value):
+        if value in enum_def:
+            return enum_def[value]
+        return f'unknown ({value})'
+
+    @staticmethod
+    def get_code_task_string(value):
+        return Consigne.get_enum_string(Consigne.TASK_CODE, value)
+
+    @staticmethod
+    def get_computer_string(value):
+        return Consigne.get_enum_string(Consigne.COMPUTER, value)
+
+    @staticmethod
+    def get_application_string(value):
+        return Consigne.get_enum_string(Consigne.APPLICATION, value)
+
     def __str__(self):
-        return f'Consigne : Tache {self.code_tache}, app {self.code_app}, msg_len {self.msg_len}, page {self.page}, addr {self.msg_addr}'
+        return f'Consigne : Tache {self.get_code_task_string(self.code_tache)}, app {self.code_app}, msg_len {self.msg_len}, page {self.page}, addr ${self.msg_addr:04x}'
 

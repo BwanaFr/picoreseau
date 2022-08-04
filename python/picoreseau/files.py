@@ -238,7 +238,7 @@ class NanoreseauFile:
 
     def __str__(self):
         ret = f'File ID : {self.identifier} v{self.file_version_major}.{self.file_version_minor} {self.creation_date}, modified {self.modification_date}' \
-           '\nFile type : {self.get_file_type()} Status : {self.get_file_status()}'
+           f'\nFile type : {self.get_file_type()} Status : {self.get_file_status()}'
         if self.binary_data:
             ret += f'\n' + str(self.binary_data)
         return ret
@@ -288,18 +288,18 @@ class NRConfigurationFile:
         self.listing_disk = int.from_bytes(f.read(1), "little")
         self.system_byte = int.from_bytes(f.read(1), "little")
         id_count = int.from_bytes(f.read(1), "little")
-        print(f'Got {id_count} identifiers')
-        p = re.compile('[a-zA-Z0-9 ]')
-        for i in range(0,id_count):
+        print(f'Got {id_count} identifiers')        
+        for i in range(0, id_count):
             id = f.read(32)
+            id_str = ''.join(f'{letter:02x}' for letter in id)
             file = self.__get_file_name(f, 12)
-            self.identifiers[id] = file
+            self.identifiers[id_str] = file
 
     def __str__(self):
         ret = f'Configuration file v{self.version} exit file: {self.exit_file_name.file_name}\n' \
                 'Identifiers:'
         for id in self.identifiers:
-            ret += f'\n' + ''.join(f'{letter:02x}' for letter in id) + " -> " + str(self.identifiers[id])
+            ret += f'\n{id} -> {str(self.identifiers[id])}'
         return ret
 
 
