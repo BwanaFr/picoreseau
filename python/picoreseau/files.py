@@ -243,6 +243,21 @@ class NanoreseauFile:
             ret += f'\n' + str(self.binary_data)
         return ret
 
+class ApplicationFile:
+    """
+        Defines an application file to be loaded on the drive
+    """
+
+    def __init__(self, data):
+        self.drive = bytes([0x40 + data[0]]).decode('utf-8')
+        #Remove spaces in name and append extension
+        self.file_name = data[1:-3].decode('utf-8').strip()
+        self.file_name += '.'
+        self.file_name += data[-3:].decode('utf-8').strip()
+
+    def __str__(self):
+        return f'ApplicationFile on drive {self.drive} with name {self.file_name}'
+
 class NRConfigurationFile:
     """
         Class for loading a NR3.DATA configuration file
@@ -259,16 +274,7 @@ class NRConfigurationFile:
             self.open_file(file_path)
 
     def __get_file_name(self, f, count):
-        p = re.compile('[a-zA-Z0-9 ]')
-        file = ''
-        for b in range(0,count):
-            try:
-                c = f.read(1).decode('utf-8')
-                if p.match(c):
-                    file += c 
-            except:
-                file += ' '
-        return file
+        return ApplicationFile(f.read(count))
 
     def open_file(self, file_path):
         f = open(file_path, 'rb')
@@ -290,10 +296,10 @@ class NRConfigurationFile:
             self.identifiers[id] = file
 
     def __str__(self):
-        ret = f'Configuration file v{self.version} exit file: {self.exit_file_name}\n' \
+        ret = f'Configuration file v{self.version} exit file: {self.exit_file_name.file_name}\n' \
                 'Identifiers:'
         for id in self.identifiers:
-            ret += f'\n' + ''.join(f'{letter:02x}' for letter in id) + " -> " + self.identifiers[id]
+            ret += f'\n' + ''.join(f'{letter:02x}' for letter in id) + " -> " + str(self.identifiers[id])
         return ret
 
 
