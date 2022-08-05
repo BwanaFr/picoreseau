@@ -29,7 +29,46 @@ class Station:
     def next_message_number(self):
         self.msg_num += 1
         return self.msg_num
-    
+
+class Server:
+    """
+        The nanoreseau master
+    """
+
+    # Maps of callbacks
+    SERVER_TASKS = {
+        Consigne.TC_INIT_CALL : {
+            0 : _handle_init_call,
+        },
+        Consigne.TC_FILE : {
+            # TODO : Handle file requests here
+            36 : None,  # Open file for reading
+            37 : None,  # Open file for writing
+            40 : None,  # Read from file
+            41 : None,  # Write to file
+            42 : None,  # Close file
+            39 : None,  # Create file
+            45 : None,  # Delete file
+            46 : None,  # Rename file
+            43 : None,  # Reserve file
+            44 : None,  # Release file
+            47 : None,  # Copy file
+            34 : None,  # File catalog (CATP)
+            35 : None,  # File catalog (CATS)
+            
+        },
+    }
+
+    def _handle_init_call(self, consigne, station):
+        """
+            Handles the initial call on a station
+        """
+        pass
+
+
+    def __init__(self, device):
+        self.device = device
+
 def get_bin_file_consigne(file, dest):
     c = Consigne()
     c.dest = dest.id
