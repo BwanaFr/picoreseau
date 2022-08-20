@@ -6,17 +6,19 @@
 #include "pico/sync.h"
 #include "pico/time.h"
 
+#define VENDOR_REQUEST_RESET 1
+
 #pragma pack (1)
 typedef struct USB_STATUS_OUT {
     uint8_t state;              // Device state
     uint8_t error;              // Error code
+    uint8_t event;              // Event signal
     char errorMsg[60];          // Error message
 }USB_STATUS_OUT;
 
 #pragma pack (1)
 typedef struct USB_CONSIGNE_OUT {
     uint8_t peer;               // Last peer identifier
-    uint8_t exchange_num;       // Last exchange number
     Consigne consigne;          // Consigne data
 }USB_CONSIGNE_OUT;
 
@@ -104,7 +106,9 @@ void nr_usb_tasks() {
         case SENDING_STATUS:
             // Status requested by host
             mutex_enter_blocking(&usb_mutex);
-            tud_vendor_write_all(&status_out, sizeof(USB_STATUS_OUT));            
+            tud_vendor_write_all(&status_out, sizeof(USB_STATUS_OUT));
+            // Resets the event 
+            status_out.event = EVT_NONE;    
             mutex_exit(&usb_mutex);
             usb_state = IDLE;
             break;
@@ -119,19 +123,14 @@ void nr_usb_tasks() {
         case RECEIVE_CONSIGNE:
             // Consigne sent by host
             if(tud_vendor_available()){
-                //Gets message number
-                uint8_t msg_num = 0;
-                tud_vendor_read(&msg_num, sizeof(msg_num));
                 Consigne rxConsigne;
                 memset(&rxConsigne, 0, sizeof(rxConsigne));
                 //Gets consigne length and dest
                 tud_vendor_read(&rxConsigne.length, sizeof(rxConsigne.length) + sizeof(rxConsigne.dest));
-                //Consigne length is given with multiple of 4
-                uint32_t consigneLength = rxConsigne.length * 4;
                 //Read consigne bytes
-                uint32_t r = tud_vendor_read(&rxConsigne.data, consigneLength);
+                uint32_t r = tud_vendor_read(&rxConsigne.data, rxConsigne.length);
                 //Send consigne to nanoreseau
-                send_nr_consigne(&rxConsigne);
+                request_nr_consigne(&rxConsigne);
             }
             usb_state = IDLE;
             break;
@@ -158,16 +157,36 @@ void nr_usb_tasks() {
             }
             break;
         case SENDING_DISCONNECT:
-            uint8_t cmd[2]; //Two bytes, one for peer, next for msg_num
-            lenRx = tud_vendor_read(cmd, sizeof(cmd));
-            printf("Disconnecting %u\n", cmd[0]);
-            send_nr_disconnect(cmd[0], cmd[1]);
+            uint8_t cmd; //Peer address to disconnect
+            lenRx = tud_vendor_read(&cmd, sizeof(cmd));
+            printf("Disconnecting %u\n", cmd);
+            request_nr_disconnect(cmd);
             usb_state = IDLE;
             break;
         default:
             usb_state = IDLE;
             break;
     }
+}
+
+bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const * request)
+{
+  // nothing to with DATA & ACK stage
+  if (stage != CONTROL_STAGE_SETUP) return true;
+
+  switch (request->bmRequestType_bit.type)
+  {
+    case TUSB_REQ_TYPE_VENDOR:
+      switch (request->bRequest)
+      {
+        case VENDOR_REQUEST_RESET:
+            printf("Reseting...\n");
+            usb_state = IDLE;
+            //TODO : Maybe reset other state machines (PIO...)
+            return true;            
+      }
+  }
+  return false;
 }
 
 void nr_usb_set_state(NR_STATE state) {
@@ -179,15 +198,22 @@ void nr_usb_set_state(NR_STATE state) {
 void nr_usb_set_error(NR_ERROR error, const char* errMsg) {
     mutex_enter_blocking(&usb_mutex);
     status_out.error = error;
+    status_out.event = EVT_ERROR;
     memset(status_out.errorMsg, 0, sizeof(status_out.errorMsg));
     strlcpy(status_out.errorMsg, errMsg, sizeof(status_out.errorMsg));
     mutex_exit(&usb_mutex);
 }
 
-void nr_usb_set_consigne(uint8_t peer,  uint8_t exchange_num, const Consigne* consigne) {
+void nr_usb_set_consigne(uint8_t peer, const Consigne* consigne) {
     mutex_enter_blocking(&usb_mutex);
+    status_out.event = EVT_SELECTED;
     consigne_out.peer = peer;
-    consigne_out.exchange_num = exchange_num;
     memcpy(&consigne_out.consigne, consigne, sizeof(consigne_out.consigne));
+    mutex_exit(&usb_mutex);
+}
+
+void nr_usb_set_cmd_done() {
+    mutex_enter_blocking(&usb_mutex);
+    status_out.event = EVT_CMD_DONE;
     mutex_exit(&usb_mutex);
 }

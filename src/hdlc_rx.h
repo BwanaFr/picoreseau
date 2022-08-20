@@ -43,5 +43,9 @@ static inline bool isHDLCReceiverEnabled()
  **/
 void resetReceiverState();
 
+/**
+ * Inhibit the RX state machine
+ */
+void setRXEnable(bool enable);
 
 #endif

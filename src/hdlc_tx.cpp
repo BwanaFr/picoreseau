@@ -6,6 +6,8 @@
 #include "hdlc_tx.pio.h"
 #include "clock_detect.h"
 
+#include "hdlc_rx.h"
+
 #include <stdio.h>
 
 uint txEnablePin = 0;
@@ -66,7 +68,7 @@ void setClock(bool enabled)
     }else{
         dataActive = false;
         while(gpio_get(txEnablePin)){
-            tight_loop_contents();
+            tight_loop_contents();            
         }
     }
 }
@@ -78,6 +80,7 @@ void setClock(bool enabled)
  **/
 void sendData(const uint8_t* buffer, uint len)
 {
+    setRXEnable(false);
     setClock(true);
     //Prepare a DMA transfer
     uint8_t sDMAChannel = dma_claim_unused_channel(true);
@@ -87,13 +90,6 @@ void sendData(const uint8_t* buffer, uint len)
     channel_config_set_write_increment(&c, false);
     channel_config_set_dreq(&c, pio_get_dreq(txPIO, txDataSM, true));
     channel_config_set_sniff_enable(&c, true);
-
-    // Turn on CRC-16/X-25
-    dma_sniffer_enable(sDMAChannel, 0x3, true);
-    dma_hw->sniff_ctrl |= 0x800;    //Out inverted (bitwise complement, XOR out)
-    dma_hw->sniff_ctrl |= 0x400;    //Out bit-reversed
-    dma_hw->sniff_data = 0xFFFF;    //Start with 0xFFFF
-
     //Configure and start DMA
     dma_channel_configure(
         sDMAChannel,
@@ -101,17 +97,28 @@ void sendData(const uint8_t* buffer, uint len)
         &txPIO->txf[txDataSM],
         buffer,
         len,
-        true    // Start immediately
+        false    // Start immediately
     );    
+    // Turn on CRC-16/X-25
+    dma_sniffer_enable(sDMAChannel, 0x3, true);
+    dma_hw->sniff_ctrl |= 0x800;    //Out inverted (bitwise complement, XOR out)
+    dma_hw->sniff_ctrl |= 0x400;    //Out bit-reversed
+    dma_hw->sniff_data = 0xFFFF;    //Start with 0xFFFF
+
+    // Starts DMA
+    dma_channel_start(sDMAChannel);
     dma_channel_wait_for_finish_blocking(sDMAChannel);
-    dma_channel_unclaim(sDMAChannel);
     //Send CRC
     flagSent = false;
     pio_sm_put_blocking(txPIO, txDataSM, ((dma_hw->sniff_data>>16) & 0xFF));
     pio_sm_put_blocking(txPIO, txDataSM, ((dma_hw->sniff_data>>24) & 0xFF));
+    // Disable sniffing on this channel
+    hw_clear_bits(&dma_hw->ch[sDMAChannel].al1_ctrl, DMA_CH0_CTRL_TRIG_SNIFF_EN_BITS);
+    dma_channel_unclaim(sDMAChannel);
     while(!pio_sm_is_tx_fifo_empty(txPIO, txDataSM) & !flagSent){
         tight_loop_contents();
     }
-    dma_sniffer_disable();
+    setRXEnable(true);
+    sleep_us(50);
     setClock(false);
 }

@@ -21,11 +21,7 @@ class USBCommand:
             self.cmd = USBCommand.CMD_GET_CONSIGNE
         if "consigne" in kwargs:
             self.cmd = USBCommand.CMD_PUT_CONSIGNE
-            msg_num = 0
-            if "msg_num" in kwargs:
-                msg_num = kwargs["msg_num"]
-            self.payload = bytearray(struct.pack('B', msg_num))
-            self.payload.extend(kwargs["consigne"].to_bytes())
+            self.payload = kwargs["consigne"].to_bytes()
         if "tx_data" in kwargs:
             # Send data to nanoreseau
             self.cmd = USBCommand.CMD_PUT_DATA
@@ -37,10 +33,7 @@ class USBCommand:
         if "disconnect" in kwargs:
             # Send data to nanoreseau
             self.cmd = USBCommand.CMD_DISCONNECT
-            msg_num = 0
-            if "msg_num" in kwargs:
-                msg_num = kwargs["msg_num"]
-            self.payload = struct.pack('BB', kwargs["disconnect"], msg_num)
+            self.payload = struct.pack('B', kwargs["disconnect"])
     
     def to_bytes(self):
         ret = None

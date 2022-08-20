@@ -19,22 +19,32 @@
 // GPIO definitions for RX
 #define DATA_RX_PIN 0
 #define CLK_RX_PIN 1
-#define RX_TRCV_ENABLE_PIN  2       // Receiver transceiver enable GPIO
+#define RX_TRCV_ENABLE_PIN  2           // Receiver transceiver enable GPIO
 // GPIO definitions for TX
 #define DATA_TX_PIN 3
 #define CLK_TX_PIN 4
-#define TX_TRCV_ENABLE_PIN 5        // Emit transceiver enable GPIO
+#define TX_TRCV_ENABLE_PIN 5            // Emit transceiver enable GPIO
 
-#define DEV_NUMBER 0x0              // Device address on BUS (0 for master)
-#define PCH_RETRIES 5               // Number of retries to send PCH
+#define DEV_NUMBER 0x0                  // Device address on BUS (0 for master)
+#define PCH_RETRIES 5                   // Number of retries to send PCH
 
-static uint8_t buffer[65535];
-static NR_STATE nr_state = NR_IDLE;
-static NR_ERROR nr_error = NO_ERROR;
-static Consigne current_consigne;
+#define ECHO_DETECT_TIMEOUT 5           // Number of ms before failing to detect echo clock 
 
-static uint8_t actual_peer = 0;
-static uint8_t actual_msg_num = 0;
+static uint8_t buffer[65535];           // Data buffer (for RX and TX)
+static NR_STATE nr_state = NR_IDLE;     // Actual state
+static NR_CMD nr_command = NR_NONE;     // Pending command to be executed
+
+static Consigne current_consigne;       // Actual consigne
+static uint8_t disconnect_peer = 0;     // Peer to disconnect
+
+static Station peers[32];           // Peers status
+
+
+uint16_t to_thomson(uint16_t val){
+    uint16_t ret = (val >> 8) & 0xFF;
+    ret |= (val << 8) & 0xFF00;
+    return ret;
+}
 
 /**
  * Dumps current config to sdio
@@ -44,8 +54,8 @@ void dump_current_consigne() {
     printf("Lenght : %u, dest : %u\n", current_consigne.length, current_consigne.dest);
     printf("Network task code : %u, Application task code : %u\n", current_consigne.data.code_tache,
                 current_consigne.data.code_app);
-    printf("Msg bytes %u, Code page : %u, Code address : $%x\n", current_consigne.data.msg_len,
-                current_consigne.data.page, current_consigne.data.msg_addr);
+    printf("Msg bytes %u, Code page : %u, Code address : $%04x\n", to_thomson(current_consigne.data.msg_len),
+                current_consigne.data.page, to_thomson(current_consigne.data.msg_addr));
     printf("Computer : %u, Application : %u\n", current_consigne.data.ordinateur, current_consigne.data.application);
     printf("Context data: \n");
     for(uint i=0;i<sizeof(current_consigne.data.ctx_data);++i){
@@ -58,6 +68,14 @@ void dump_current_consigne() {
 }
 
 /**
+ * Sets the nanoreseau state
+ */
+void set_nr_state(NR_STATE state) {
+    nr_state = state;
+    nr_usb_set_state(nr_state);
+}
+
+/**
  * Convert a RX buffer to consigne
  **/
 void buffer_to_consigne(uint8_t* buffer, Consigne* consigne, uint32_t len) {
@@ -67,6 +85,18 @@ void buffer_to_consigne(uint8_t* buffer, Consigne* consigne, uint32_t len) {
     memcpy(&consigne->data, &buffer[2], len-1);
     consigne->length = len;         // Lenght of the consigne
     consigne->dest = DEV_NUMBER;    // Dest should be us (TODO check)
+}
+
+/**
+ * Convert a consigne to TX buffer
+ */
+uint consigne_to_buffer(const Consigne* consigne, const Station& dest, uint8_t* buffer) {
+    uint len = 3 + consigne->length;
+    buffer[0] = consigne->dest; // Destinataire
+    buffer[1] = dest.msg_num;   // Control word
+    buffer[2] = DEV_NUMBER;     // Expediteur
+    memcpy(&buffer[3], &consigne->data, sizeof(consigne->data));
+    return len;
 }
 
 /**
@@ -164,6 +194,19 @@ receiver_status send_ctrl(uint8_t to, CTRL_WORD ctrl, uint8_t& payload, CTRL_WOR
     return ret;
 }
 
+receiver_status wait_for_echo() {
+    absolute_time_t end = make_timeout_time_ms(ECHO_DETECT_TIMEOUT);
+    while(!is_clock_detected()){
+        tight_loop_contents();
+        if(absolute_time_diff_us(end, get_absolute_time()) > 0){        
+            return time_out;
+        }
+    }
+    //No waits for no clock
+    wait_for_no_clock();
+    return done;
+}
+
 /**
  * Core 1 entry for running USB tasks
  **/
@@ -178,9 +221,9 @@ receiver_status send_ctrl(uint8_t to, CTRL_WORD ctrl, uint8_t& payload, CTRL_WOR
 }
 
 /**
- * Handles when the device is IDLE
+ * Waits (or receive) the initial call
  **/
-void handle_state_idle() {
+void receive_initial_call() {
     enum InternalState {WAIT_SELECT, GET_COMMAND, PCH, ERROR};
     static InternalState internalState = WAIT_SELECT;
     static uint8_t from = 0;
@@ -190,12 +233,15 @@ void handle_state_idle() {
     uint32_t nbBytes = 0;                       //Number of bytes in initial call
     receiver_status status = bad_crc;           //HDLC receiver status
     InternalState nextState = internalState;    //Next state to take into account
-    int64_t elapsed = 0;                        //Time elapsed 
+    // int64_t elapsed = 0;                        //Time elapsed 
     switch (internalState)
     {
     case WAIT_SELECT:
         //Waits to receive a "Prise de ligne/Appel initial" request        
         if(wait_for_ctrl_nb(status, consigneBytes, from, MCAPI)){
+            // Set state to receiving inital call
+            set_nr_state(NR_RCV_INIT_CALL);
+            // Reset USB error
             nr_usb_set_error(NO_ERROR, "");
             // Got select
             consigneBytes = consigneBytes * 4;
@@ -241,17 +287,17 @@ void handle_state_idle() {
     case PCH:
         // Sends the acknowledge
         {
-        actual_msg_num = 0;
-        status = send_ctrl(from, MCPCH, actual_msg_num, MCAMA);
+        peers[from].msg_num = 0;
+        status = send_ctrl(from, MCPCH, peers[from].msg_num, MCAMA);
         if(status == done){
             // Got select
-            printf("Avis de mise en attente de %u (msg num : %x)\n", from, actual_msg_num);
+            printf("Avis de mise en attente de %u (msg num : %x)\n", from, peers[from].msg_num);
             nextState = WAIT_SELECT;
-            set_nr_state(NR_SELECTED);
-            actual_peer = from;
-            nr_usb_set_consigne(from, actual_msg_num, &current_consigne);
+            peers[from].waiting = true; // Received avis de mise en attente
+            nr_usb_set_consigne(from, &current_consigne);
             dump_current_consigne();
         }else if(status == time_out){
+            peers[from].waiting = false;
             nr_usb_set_error(TIMEOUT, "MCAMA rx timeout");
             resetReceiverState();
             nextState = ERROR;
@@ -272,30 +318,97 @@ void handle_state_idle() {
         // Future internal state changed, get time for watchdog
         lastStateChange = get_absolute_time();
         internalState = nextState;
+        // Go to IDLE if done
+        if(internalState == WAIT_SELECT){
+            set_nr_state(NR_IDLE);
+        }
     }
 }
 
-void handle_state_disconnect() {
-    receiver_status status = send_ctrl(actual_peer, MCDISC, actual_msg_num, MCUA);
+void send_disconnect() {
+    receiver_status status = send_ctrl(disconnect_peer, MCDISC, peers[disconnect_peer].msg_num, MCUA);
     if(status == done){
+        //TODO: Handle error
+        peers[disconnect_peer].waiting = false;
+        disconnect_peer = 0;
         set_nr_state(NR_IDLE);
+        nr_command = NR_NONE;
     }
 }
 
-void set_nr_state(NR_STATE state) {
-    nr_state = state;
-    nr_usb_set_state(nr_state);
-}
-
-void send_nr_disconnect(uint8_t peer, uint8_t msg_num) {
-    actual_peer = peer;
-    actual_msg_num = msg_num;
-    set_nr_state(NR_DISCONNECT);
-}
-
-void send_nr_consigne(const Consigne* consigne) {
-    memcpy(&current_consigne, consigne, sizeof(Consigne));
+void send_consigne() {
+    printf("Will send consigne!\n");
     dump_current_consigne();
+    uint8_t dest = current_consigne.dest;
+    CTRL_WORD appel = MCAPA;   
+    if(!peers[dest].waiting){
+        printf("Performing initial call on peer %d\n", dest);
+        appel = MCAPI;
+        peers[dest].msg_num = 0;
+    }
+    printf("Sending send_ctrl\n");
+    //TODO: Handle error, timeout...
+    while(send_ctrl(dest, appel, peers[dest].msg_num) != done){
+        tight_loop_contents();    
+    }
+    printf("Waits echo\n");
+    // Waits for echo, TODO: handle error
+    receiver_status status = wait_for_echo();
+    if(status == time_out){
+        nr_usb_set_error(TIMEOUT, "Echo timeout!");
+        return;
+    }
+    //Send the consigne
+    uint len = consigne_to_buffer(&current_consigne, peers[dest], buffer);
+    printf("Sending a consigne of %d bytes\n", len);
+    bool no_ack = false;
+    for(int i=0;i<5;++i){
+        sendData(buffer, len);    
+        if(current_consigne.data.code_tache & 0x80){
+            printf("Immediate execution\n");
+            return;
+        }
+        printf("Wait for ack\n");
+        //Waits for ack
+        CTRL_WORD ack = peers[dest].waiting ? MCOK : MCPCH;
+        uint8_t caller = 0;
+        if(wait_for_ctrl(peers[dest].msg_num, caller, ack, DEFAULT_RX_TIMEOUT) != done){
+            no_ack = true;
+        }else{
+            no_ack = false;
+            break;
+        }
+    }
+    if(no_ack){
+         nr_usb_set_error(TIMEOUT, "No ack");
+         return;
+    }
+
+    if(!peers[dest].waiting){
+        //Needs to ack
+        send_ctrl(dest, MCAMA, peers[dest].msg_num);
+        peers[dest].waiting = true;
+    }
+}
+
+/**
+ * Send a disconnect request for specified peers
+ * TODO: Return a status if the command is rejected
+ */
+void request_nr_disconnect(uint8_t peer) {
+    // TODO: Maybe add a mutex here
+    disconnect_peer = peer;
+    nr_command = NR_DISCONNECT;
+}
+
+/**
+ * Sends a consigne to a peer
+ * TODO: Return something in case of command rejected
+ */
+void request_nr_consigne(const Consigne* consigne) {
+    // TODO: Maybe add a mutex here
+    memcpy(&current_consigne, consigne, sizeof(Consigne));
+    nr_command = NR_SEND_CONSIGNE;
 }
 
 
@@ -320,6 +433,10 @@ int main() {
     }
     printf("\n");
     printf("Lenght of Consigne data is %u\n", sizeof(ConsigneData));
+
+    //Initializes peers state
+    memset(peers, 0, sizeof(peers));
+
     //Initialize the clock detection
     initialize_clock_detect();    
     //Initialize TX state machine
@@ -329,20 +446,42 @@ int main() {
     enableHDLCReceiver(true);
     absolute_time_t pTime = make_timeout_time_ms(500);
     while(true){
-        switch (nr_state)
-        {
-        case NR_IDLE:
-            handle_state_idle();
-            break;
-        case NR_DISCONNECT:
-            handle_state_disconnect();
-            break;
-        default:
-            break;
+        if((nr_state == NR_IDLE) && (nr_command != NR_NONE)){
+            nr_state = NR_BUSY;            
         }
-        if(absolute_time_diff_us(pTime, get_absolute_time())>0){
-            pTime = make_timeout_time_ms(1000);            
-            printf(".");
-        }
+
+        if((nr_state == NR_IDLE) || (nr_state == NR_RCV_INIT_CALL)){
+            // We are waiting (or receiving) the initial call
+            receive_initial_call();
+            // Just to be sure USB is alive...
+            if(absolute_time_diff_us(pTime, get_absolute_time())>0){
+                pTime = make_timeout_time_ms(1000);            
+                printf(".");
+            }
+        }else{
+            // Interface is busy sending a command
+            switch(nr_command){
+                case NR_NONE:
+                    // Should not happen
+                    set_nr_state(NR_IDLE);
+                    break;
+                case NR_SEND_CONSIGNE:
+                    //Send consigne to a peer
+                    send_consigne();
+                    break;
+                case NR_SEND_DATA:
+                    // Sends data to a peer
+                    break;
+                case NR_GET_DATA:
+                    // Receives data from a peer
+                    break;
+                case NR_DISCONNECT:
+                    // Sends a disconnect to a peer
+                    send_disconnect();
+                    break;
+            }
+            nr_state = NR_IDLE;
+            nr_command = NR_NONE;
+        }        
     }
 }

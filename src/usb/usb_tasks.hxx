@@ -33,6 +33,16 @@ enum USB_STATE{
 };
 
 /**
+ * Events on USB
+ */
+enum USB_EVENT{
+    EVT_NONE,       // No new event
+    EVT_ERROR,      // An error occured
+    EVT_SELECTED,   // A new station called us
+    EVT_CMD_DONE,   // Command executed
+};
+
+/**
  * Initializes the USB stack
  **/
 void nr_usb_init();
@@ -58,14 +68,13 @@ void nr_usb_set_error(NR_ERROR error, const char* errMsg);
 /**
  * Updates the actual consigne on USB
  * @param peer Address of the peer sending the consigne (initial call)
- * @param exchange_num Exchange number after the initial call
  * @param consigne Pointer to the received consigne
  **/
-void nr_usb_set_consigne(uint8_t peer,  uint8_t exchange_num, const Consigne* consigne);
+void nr_usb_set_consigne(uint8_t peer, const Consigne* consigne);
 
 /**
- * Gets any USB pending command
- * @return false if no command is in queue
- **/
-bool nr_usb_get_pending_command();
+ * Signal host the command is done
+ */
+void nr_usb_set_cmd_done();
+
 #endif

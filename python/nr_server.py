@@ -7,15 +7,7 @@ import sys
 import time
 import logging
 from pathlib import Path
-
-#Configuration file
-cfg_file = None
-
-#Base folder path
-base_path = None
-
-#Online stations
-on_line_sta = {}
+import struct
 
 class Station:
     """
@@ -24,153 +16,266 @@ class Station:
     def __init__(self, station_id):
         self.id = station_id
         self.waiting = False
-        self.msg_num = 0
-
-    def next_message_number(self):
-        self.msg_num += 1
-        return self.msg_num
 
 class Server:
+    logger = logging.getLogger("Server")
+
     """
         The nanoreseau master
     """
-
-    # Maps of callbacks
-    SERVER_TASKS = {
-        Consigne.TC_INIT_CALL : {
-            0 : _handle_init_call,
-        },
-        Consigne.TC_FILE : {
-            # TODO : Handle file requests here
-            36 : None,  # Open file for reading
-            37 : None,  # Open file for writing
-            40 : None,  # Read from file
-            41 : None,  # Write to file
-            42 : None,  # Close file
-            39 : None,  # Create file
-            45 : None,  # Delete file
-            46 : None,  # Rename file
-            43 : None,  # Reserve file
-            44 : None,  # Release file
-            47 : None,  # Copy file
-            34 : None,  # File catalog (CATP)
-            35 : None,  # File catalog (CATS)
-            
-        },
-    }
-
     def _handle_init_call(self, consigne, station):
         """
             Handles the initial call on a station
         """
-        pass
-
-
-    def __init__(self, device):
-        self.device = device
-
-def get_bin_file_consigne(file, dest):
-    c = Consigne()
-    c.dest = dest.id
-    c.code_tache = Consigne.TC_FILE
-    c.code_app = 55
-    bin_code = file.binary_data.bin_code[0]
-    c.msg_len = len(bin_code.data)
-    c.page = int(bin_code.code_page)
-    c.msg_addr = int(bin_code.code_address)
-    c.computer = int(file.binary_data.machine_type)
-    c.application = int(file.binary_data.code_language)
-    return c
-
-
-# Handles initial call from station
-def handle_initial_call(device, station, consigne):
-    global cfg_file
-    global base_path
-    station_sig = consigne.ctx_data[:32]
-    signature = ''.join(f'{letter:02x}' for letter in station_sig)
-    print(f'Looking for signature {signature}')
-    if signature in cfg_file.identifiers:
-        load_file = cfg_file.identifiers[signature]        
-        bin_file_path = Path(base_path).joinpath(load_file.drive).joinpath(load_file.file_name)        
-        bin_file = files.NanoreseauFile(bin_file_path)
-        print(f'Will send the file {str(bin_file)}')
-        bin_cons = get_bin_file_consigne(bin_file, station)
-        print(f'Consigne : {str(bin_cons)}')
-        device.send_consigne(bin_cons, station.next_message_number())
-    else:
-        print(f'Station identifier {signature} not found in configuration file')
-        device.disconnect_peer(station.id, station.next_message_number())
-
-# Status callback of picoreseau device
-def dev_status_cb(device, status):
-    print(f'Status : {status}')
-    if status.status_code == DeviceStatus.STATE_SELECTED:
-        print('Device selected, receiving consigne')
-        c, station_num, msg = device.get_consigne()
-        print(f'Received consigne {str(c)} from {station_num} msg #{msg}')
-        if not station_num in on_line_sta:
-            station = Station(station_num)
+        station_sig = consigne.ctx_data[:32]
+        signature = ''.join(f'{letter:02x}' for letter in station_sig)
+        self.logger.info(f'Looking for signature {signature}')
+        if signature in self.cfg_file.identifiers:
+            load_file = self.cfg_file.identifiers[signature]
+            #self.send_binary_file(load_file, station)
+            self.send_download_request(load_file, station)
+            # report = bytes([0x0, 0x50, 0x00, 0x00])           
+            #self.send_report(report, station)
+            # self.send_new_address(0x5000, 1597, 0, station)
         else:
-            station = on_line_sta[station_num]
-        station.msg_num = msg
-        # Checks if it's an initial call
-        # TODO : Make a dict with all possible task code
-        if c.code_tache == 0 and c.code_app == 0:
-            print(f'Appel initial de {station_num}')
-            handle_initial_call(device, station, c)
+            self.logger.info(f'Station identifier {signature} not found in configuration file')
+            self.device.disconnect_peer(station.id)
+        
 
 
-# Server loop method
-def server(cfg_file_path):
-    global cfg_file
-    global base_path
-    base_path = cfg_file_path
-    #Loads nr3.dat configuration file
-    nr3_dat_file = None
-    a_folder = Path(cfg_file_path).joinpath('A')
-    if not a_folder.is_dir():
-        print(f'Unable to find A folder in {cfg_file_path}')
-        return
-    if a_folder.joinpath("NR3.DAT").is_file():
-        nr3_dat_file = a_folder.joinpath("NR3.DAT")
+    # Maps of tasks
+    SERVER_TASKS = {
+        Consigne.TC_INIT_CALL : {
+            0 : (_handle_init_call, 'INIT', 'Initial call'),
+        },
+        Consigne.TC_FILE : {
+            # TODO : Handle file requests here
+            36 : (None, 'OUVFL', 'Open file for reading'),
+            37 : (None, 'OUVFE', 'Open file for writing'),
+            40 : (None, 'LIRFI', 'Read from file'),
+            41 : (None, 'ECRFI', 'Write to file'),
+            42 : (None, 'FERFI', 'Close file'),
+            39 : (None, 'CREFI', 'Create file'),
+            45 : (None, 'SUPFI', 'Delete file'),
+            46 : (None, 'RENFI', 'Rename file'),
+            43 : (None, 'RESFI', 'Reserve file'),
+            44 : (None, 'RELFI', 'Release file'),
+            47 : (None, 'COPIE', 'Copy file'),
+            34 : (None, 'CATP', 'File catalog'),
+            35 : (None, 'CATS', 'File catalog'),
+            32 : (None, 'DATE', 'Request date and time'),
+            33 : (None, 'ID', 'Declare an identifier to server'),
+            48 : (None, 'IMPRIM', 'Use server printer'),
+            49 : (None, 'SYSINF', 'Request system informations'),
+            50 : (None, 'SYSTEM', 'Back to operating system'),
+            51 : (None, 'DSKF', 'Request free space on a server disk'),
+            52 : (None, 'LIRATT', 'Get file attributes'),
+            53 : (None, 'ECRATT', 'Write file attributes'),
+            54 : (None, 'SETMODE', 'Sets file creation mode'),
+            55 : (None, 'CHBIN', 'Load binary file'),
+            56 : (None, 'CLEAR', 'Clean slave descriptor on server'),
+            57 : (None, 'RBUFF', 'Read common buffer'),
+            58 : (None, 'WBUFF', 'Write common buffer'),
+            65 : (None, 'CHAENR', 'Load an indexed file record'),
+            64 : (None, 'GARENR', 'Park an indexed file record'),
+            66 : (None, 'SUPENR', 'Delete an indexed file record'),
+            67 : (None, 'RESENR', 'Reserve an indexed file record'),
+            68 : (None, 'RELENR', 'Release an indexed file record'),
+            69 : (None, 'NES', 'Request next indexed file record number'),
+            70 : (None, 'DNE', 'Request last indexed file record number'),
+             1 : (None, 'PROG', 'Exchange program'),
+            16 : (None, 'TELE', 'Download program'),
+        },
+    }
 
-    b_folder = Path(cfg_file_path).joinpath('B')
-    if not b_folder.is_dir():
-        print(f'Unable to find B folder in {cfg_file_path}')
-    if not nr3_dat_file and b_folder.joinpath("NR3.DAT").is_file():
-        nr3_dat_file = b_folder.joinpath("NR3.DAT")
-    
-    if not nr3_dat_file:
-        print("NR3.DAT file not found, can't continue")
-        return
-    cfg_file = files.NRConfigurationFile(nr3_dat_file)
-    print(str(cfg_file))
+    def __init__(self, base_path):
+        """
+            NR server constructor
 
-    #Opens USB device
-    print("Detecting picoreseau USB device...")
-    usb_device = PicoreseauDevice.detect_device()
-    if not usb_device:
-        print("No USB picoreseau device found!")
-        exit()
-    usb_device.register_callback(dev_status_cb)
+            Parameters:
+            -----------
+            base_path : str
+                Base path containing NR disk folders (typically A and B)            
+        """
+        self.base_path = base_path
+        self.device = None
+        self.cfg_file = None
+        self.on_line_sta = {}
 
-    usb_device.start()
-    print("USB picoreseau found! Server is running...")
+    def dev_status_cb(self, device, status):
+        """
+            USB device callback
+        """
+        self.logger.info(f'New state : {str(status)}')
+        if status.event == DeviceStatus.EVT_SELECTED:
+            self.logger.info('Device selected, receiving consigne')
+            c, station_num = device.get_consigne()
+            self.logger.info(f'Received consigne {str(c)} from {station_num}')
+            if not station_num in self.on_line_sta:
+                self.logger.info(f'Discovered new station #{station_num}')
+                station = Station(station_num)
+                self.on_line_sta[station_num] = station
+            else:
+                station = self.on_line_sta[station_num]
+            # Try to find a task to be executed for this consigne
+            if not c.code_tache in self.SERVER_TASKS:
+                self.logger.error(f'Unsupported task code : {c.code_tache}. Disconnecting peer.')
+                device.disconnect_peer(station.id)
+                return
+            tasks = self.SERVER_TASKS[c.code_tache]
+            task_name = Consigne.get_code_task_string(c.code_tache)
+            if not c.code_app in tasks:
+                self.logger.error(f'Unsupported application code {c.code_app} for task {task_name}. Disconnecting peer.')
+                device.disconnect_peer(station.id)
+                return
+            task = tasks[c.code_app]
+            if not task[0]:
+                self.logger.error(f'No handler defined for task {task[1]}/{task[2]}. Disconnecting peer.')
+                device.disconnect_peer(station.id)
+                return
+            # Call the handler for this task
+            task[0](self, c, station)
 
-    #Server loop, see what we do in it...
-    try:
-        while True:
-            time.sleep(1)
-    except:
-        pass
-    usb_device.stop()
+    @staticmethod
+    def pad_file_name(name, length):
+        """
+            Pads a file name with spaces
+        """
+        ret = name
+        for i in range(len(name), length):
+            ret += ' '
+        return ret
+
+    def send_report(self, data, station):
+        """
+            Send report (compte-rendu) to specified station
+
+            Parameters:
+            -----------
+            data: bytes
+                Report data
+            station: Station
+                Targeted station
+        """
+        cons = Consigne()
+        cons.dest = station.id
+        cons.code_tache = Consigne.TC_COPY_REPORT
+        cons.ctx_data = data
+        self.device.send_consigne(cons)
+
+    def send_new_address(self, address, lenght, page, station):
+        cons = Consigne()
+        cons.dest = station.id
+        cons.code_tache = Consigne.TC_INIT_CALL
+        cons.msg_addr = address
+        cons.msg_len = lenght
+        cons.page = page
+        self.device.send_consigne(cons)
+
+    def send_download_request(self, file, station):
+        """
+            Sends a download request to specified station
+        """
+        bin_file_path = Path(self.base_path).joinpath(file.get_drive_name()).joinpath(file.get_file_name())        
+        bin_file = files.NanoreseauFile(bin_file_path)
+        cons = Consigne()
+        cons.dest = station.id
+        cons.code_tache = Consigne.TC_FILE
+        cons.delayed = True
+        cons.code_app = 16  #TELE
+        cons.computer = Consigne.COMPUTER_MO5
+        cons.application = bin_file.creation_language
+        cons.ctx_data = struct.pack('>BB8s3s', 
+            0x1, file.drive, Server.pad_file_name(file.file_name, 8).encode('utf-8'), Server.pad_file_name(file.extension, 3).encode('utf-8')
+        )
+        self.device.send_consigne(cons)
+        time.sleep(0.01)
+        self.device.disconnect_peer(station.id)
+
+    def send_binary_file(self, file, station):
+        """
+            Sends a binary file to specified station
+        """
+        bin_file_path = Path(self.base_path).joinpath(file.get_drive_name()).joinpath(file.get_file_name())        
+        bin_file = files.NanoreseauFile(bin_file_path)
+        self.logger.info(f'Will send the file {str(bin_file)}')
+        if not bin_file.binary_data and type(bin_file.binary_data) != files.BinaryData:
+            self.logger.error(f'File {bin_file.identifier} is not a valid binary file!')
+            return
+        bin_data = bin_file.binary_data
+        for c in bin_data.bin_code:
+            # Built a CHBIN consigne
+            cons = Consigne()
+            cons.dest = station.id
+            cons.code_tache = Consigne.TC_FILE
+            cons.code_app = 55  #CHBIN
+            cons.msg_len = len(c.data)
+            cons.page = c.code_page
+            cons.msg_addr = c.code_address
+            cons.computer = bin_data.machine_type
+            cons.application = 1 #bin_data.code_language
+            cons.ctx_data = struct.pack('>B8s3sB', 
+                file.drive, Server.pad_file_name(file.file_name, 8).encode('utf-8'), Server.pad_file_name(file.extension, 3).encode('utf-8'), 0 #bin_data.loading_byte
+            )
+            self.device.send_consigne(cons)
+
+    def init_server(self):
+        """
+            Initializes the server.
+            Loads the configuration file and detects USB device
+        """
+        #Loads nr3.dat configuration file
+        nr3_dat_file = None
+        a_folder = Path(self.base_path).joinpath('A')
+        if not a_folder.is_dir():
+            raise Exception(f'Unable to find A folder in {self.base_path}')
+        if a_folder.joinpath("NR3.DAT").is_file():
+            nr3_dat_file = a_folder.joinpath("NR3.DAT")
+            
+        b_folder = Path(self.base_path).joinpath('B')
+        if not b_folder.is_dir():
+            self.logger.info(f'Unable to find B folder in {self.base_path}')
+        elif not nr3_dat_file and b_folder.joinpath("NR3.DAT").is_file():
+            nr3_dat_file = b_folder.joinpath("NR3.DAT")            
+        
+        if not nr3_dat_file:
+            raise Exception("NR3.DAT file not found, can't continue")
+
+        self.logger.info(f'Found configuration file at {nr3_dat_file}')
+        self.cfg_file = files.NRConfigurationFile(nr3_dat_file)
+
+        #Opens USB device
+        self.logger.info("Detecting picoreseau USB device...")
+        self.device = PicoreseauDevice.detect_device()
+        if not self.device:
+            raise Exception("No USB picoreseau device found!")
+        self.device.register_callback(self.dev_status_cb)
+        self.device.start()
+        self.logger.info("USB picoreseau found! Server is ready...")
+
+
+    def run_server(self):
+        """
+            Runs the server
+        """
+        if not self.cfg_file or not self.device:
+            raise Exception("Server not initialized!")
+        #Server loop, see what we do in it...
+        try:
+            while True:
+                time.sleep(1)
+        except:
+            pass
+        self.device.stop()
+
 
 if __name__ == "__main__":
     logging.basicConfig()
     logging.getLogger().setLevel(logging.DEBUG)
     if len(sys.argv) > 1:
         print("Starting NR server")
-        server(sys.argv[1])
+        server = Server(sys.argv[1])
+        server.init_server()
+        server.run_server()
     else:
         print("Please provide a folder containing A and B subfolders!")

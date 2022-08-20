@@ -108,6 +108,7 @@ class Consigne:
         """
         self.length = 0
         self.dest = 0
+        self.delayed = False
         self.code_tache = 0
         self.code_app = 0
         self.msg_len = 0
@@ -151,6 +152,9 @@ class Consigne:
         self.computer, \
         self.application = struct.unpack_from(self.CONSIGNE_HEADER, b)
         self.ctx_data = b[self.CONSIGNE_HEADER_SIZE:]
+        if self.code_tache & 0x80:
+            self.code_tache &= ~0x80
+            self.delayed = True
 
     def to_bytes(self):
         # Consigne length is always a multiple of 4
@@ -160,10 +164,13 @@ class Consigne:
         else:
             length = int(length/4)
         # Create consigne
+        code_tache = self.code_tache
+        if self.delayed:
+            code_tache |= 0x80
         ret = bytearray(struct.pack(self.CONSIGNE_HEADER,
-                        length,
+                        length*4,
                         self.dest,
-                        self.code_tache,
+                        code_tache,
                         self.code_app,
                         self.msg_len,
                         self.page,
@@ -196,5 +203,5 @@ class Consigne:
         return Consigne.get_enum_string(Consigne.APPLICATION, value)
 
     def __str__(self):
-        return f'Consigne : Tache {self.get_code_task_string(self.code_tache)}, app {self.code_app}, msg_len {self.msg_len}, page {self.page}, addr ${self.msg_addr:04x}'
+        return f'Consigne : Tache {self.get_code_task_string(self.code_tache)} {self.delayed and "Delayed" or ""}, app {self.code_app}, msg_len {self.msg_len}, page {self.page}, addr ${self.msg_addr:04x}'
 

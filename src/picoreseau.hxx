@@ -7,8 +7,16 @@
  * Main state machine states
  */
 enum NR_STATE{
-    NR_IDLE,           // Waits for a peer to select us
-    NR_SELECTED,       // Line taken with peer
+    NR_IDLE,            // Waits for a peer to select us (attente appel initial)
+    NR_RCV_INIT_CALL,   // Receiving initial call
+    NR_BUSY,            // Something is running
+};
+
+/**
+ * Commands to execute
+ */
+enum NR_CMD{
+    NR_NONE,           // No command
     NR_SEND_CONSIGNE,  // Sends consigne to a peer
     NR_SEND_DATA,      // Sends data to a peer (previously selected)
     NR_GET_DATA,       // Reads data from a peer (previously selected)
@@ -59,6 +67,12 @@ typedef struct Consigne {
     ConsigneData data;      // Consigne data
 }Consigne;
 
+//Represents a station
+typedef struct Station {
+    bool waiting;       // Station is waiting (mise en attente)
+    uint8_t msg_num;    // Station actual message number
+}Station;
+
 #define DEFAULT_RX_TIMEOUT  2000    // RX timeout in microseconds
 #define SEND_CTRL_RETRIES 5         // Number of times to try to resend the control word on bus
 
@@ -88,17 +102,16 @@ receiver_status send_ctrl(uint8_t to, CTRL_WORD ctrl, uint8_t& payload, CTRL_WOR
 /**
  * Sends a disconnect request to the station
  * @param peer Station ID to disconnect
- * @param msg_num Message number in the nanoreseau frame
  **/
-void send_nr_disconnect(uint8_t peer, uint8_t msg_num);
+void request_nr_disconnect(uint8_t peer);
 
 /**
- * Sends a consigne to a device (called from USB functions)
+ * Request to send a consigne to a device (called from USB functions)
  * If the device is actually the one selected
  * A MCAPA will be issued. Else, a line take request will be made.
  * 
  **/
-void send_nr_consigne(const Consigne* consigne);
+void request_nr_consigne(const Consigne* consigne);
 
 /**
  * Sets the main state machine state

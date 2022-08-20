@@ -1,4 +1,6 @@
 import logging
+import numbers
+from pydoc import doc
 import threading
 import ctypes
 from time import sleep
@@ -12,12 +14,25 @@ from .usb import USBCommand
 __EP_OUT__ = 0x3    # Picoreseau data USB endpoint out
 __EP_IN__ = 0x83    # Picoreseau data USB endpoint in
 
+
+# Things to change/do:
+# - Add concept of session to handle message numbers (should be done in MCU)
+# - Maybe remove the thread in PicoreseauDevice
+# - Add an acknowledge mechanism for all commands send to MCU (to retrieve next msg_num)
+
+
 class PicoreseauDevice(threading.Thread):
 
 
-    __STATE_REPLY_STRUCT__ = 'BB60s'    # State reply structure definition
+    __STATE_REPLY_STRUCT__ = 'BBB60s'    # State reply structure definition
+    # typedef struct USB_STATUS_OUT {
+    #     uint8_t state;              // Device state
+    #     uint8_t error;              // Error code
+    #     uint8_t event;              // Event signal
+    #     char errorMsg[60];          // Error message
+    # }USB_STATUS_OUT;
     __STATE_REPLY_STRUCT_LEN_ = struct.calcsize(__STATE_REPLY_STRUCT__)
-    __CONSIGNE_HEADER_REPLY__ = 'BB'    # Consigne reply header
+    __CONSIGNE_HEADER_REPLY__ = 'B'    # Consigne reply header
     __CONSIGNE_HEADER_REPLY_LEN_ = struct.calcsize(__CONSIGNE_HEADER_REPLY__)
 
     logger = logging.getLogger("PicoreseauDevice")
@@ -79,22 +94,23 @@ class PicoreseauDevice(threading.Thread):
         while True:
             sleep(self.poll_interval)
             status = self.get_state()
-            if status.status_code != last_status or status.error_code != last_error:
+            if status.status_code != last_status or status.error_code != last_error \
+                or status.event != DeviceStatus.EVT_NONE:
                 last_status = status.status_code
                 last_error = status.error_code
                 self.logger.debug(f'New status : {str(status)}')
                 if self.__status_cb__:
                     self.__status_cb__(self, status)
 
-    def disconnect_peer(self, peer, msg_num):
+    def disconnect_peer(self, peer):
         """
             Sends a request to disconnect specific peer
         """
         self.logger.debug(f'Disconnecting peer #{peer}')
-        cmd = USBCommand(disconnect=peer, msg_num=msg_num)
+        cmd = USBCommand(disconnect=peer)
         self.device.write(__EP_OUT__, cmd.to_bytes())
             
-    def send_consigne(self, consigne, msg_num):
+    def send_consigne(self, consigne):
         """
             Sends a consigne to a device
             peer identifier is already in the consigne object
@@ -107,8 +123,26 @@ class PicoreseauDevice(threading.Thread):
                 Message number in the network frame
         """
         self.logger.debug(f'Sending consigne : {str(consigne)}')
-        cmd = USBCommand(consigne=consigne, msg_num=msg_num)
+        c_bin = ''.join(f'{letter:02x}' for letter in consigne.to_bytes())
+        self.logger.debug(f'Sending consigne : {c_bin}')
+        cmd = USBCommand(consigne=consigne)
         self.device.write(__EP_OUT__, cmd.to_bytes())
+        # TODO: Wait for end of transmission on bus and check errors
+
+    def send_data(self, data, dest, msg_num):
+        """
+            Sends binary data to a device (vas-y recois)
+
+            Parameters
+            ----------
+            data : bytes
+                Binary data to be send
+            dest : int
+                Slave address to send data to
+            msg_num : int
+                Message number
+        """
+        pass
 
     def get_state(self):
         """
@@ -121,9 +155,9 @@ class PicoreseauDevice(threading.Thread):
         cmd = USBCommand(get_status=True)
         self.device.write(__EP_OUT__, cmd.to_bytes())
         c = self.device.read(__EP_IN__, self.__STATE_REPLY_STRUCT_LEN_)
-        self.status_code, self.error_code, error_msg = struct.unpack(self.__STATE_REPLY_STRUCT__, c)
+        self.status_code, self.error_code, event, error_msg = struct.unpack(self.__STATE_REPLY_STRUCT__, c)
         self.error_msg = error_msg.decode()
-        return DeviceStatus(self.status_code, self.error_code, self.error_msg)
+        return DeviceStatus(self.status_code, self.error_code, event, self.error_msg)
 
     def get_consigne(self):
         """
@@ -138,9 +172,15 @@ class PicoreseauDevice(threading.Thread):
         total_bytes = self.__CONSIGNE_HEADER_REPLY_LEN_ + Consigne.CONSIGNE_SIZE
         self.logger.debug(f'Reading {total_bytes} for consigne')
         c = self.device.read(__EP_IN__, total_bytes)
-        peer, exchange_num = struct.unpack_from(self.__CONSIGNE_HEADER_REPLY__, c)
-        ret = Consigne(c[2:])
-        return ret, peer, exchange_num
+        peer = struct.unpack_from(self.__CONSIGNE_HEADER_REPLY__, c)
+        ret = Consigne(c[1:])
+        return ret, peer[0]
+
+    def reset_device_state(self):
+        """
+            Resets MCU internal states
+        """
+        self.device.ctrl_transfer(2 << 5 | 1, 1, data_or_wLength = bytes())
 
     @staticmethod
     def detect_device():
@@ -169,25 +209,31 @@ class DeviceStatus:
         device
     """   
     STATE_IDLE = 0
-    STATE_SELECTED = 1
-    STATE_SEND_CONSIGNE = 2
-    STATE_SEND_DATA = 3
-    STATE_GET_DATA = 4
-    STATE_DISCONNECT = 5
+    STATE_RDV_INIT_CALL = 1
+    STATE_BUSY = 2
 
     DEVICE_STATE = {
         STATE_IDLE : "idle",
-        STATE_SELECTED : "selected",
-        STATE_SEND_CONSIGNE : "send_consigne",
-        STATE_SEND_DATA : "send_data",
-        STATE_GET_DATA : "get_data",
-        STATE_DISCONNECT : "disconnect"
+        STATE_RDV_INIT_CALL : "receiving_initial_call",
+        STATE_BUSY : "busy",
+    }
+
+    EVT_NONE = 0
+    EVT_ERROR = 1
+    EVT_SELECTED = 2
+    EVT_CMD_DONE = 3
+
+    EVENT_TYPE = {
+        EVT_NONE: "none",
+        EVT_ERROR: "error",
+        EVT_SELECTED: "selected",
+        EVT_CMD_DONE: "cmd_done",
     }
 
 
     logger = logging.getLogger("DeviceStatus")
 
-    def __init__(self, status_code, error_code, error_msg):
+    def __init__(self, status_code, error_code, event, error_msg):
         """
             Constructor
 
@@ -197,6 +243,8 @@ class DeviceStatus:
                 Picoreseau device status code
             error_code:
                 Picoreseau device error code
+            event:
+                Event identifier
             error_msg:
                 Picoreseau device error message
             
@@ -206,20 +254,28 @@ class DeviceStatus:
                     Latest status code read
                 error_code: int
                     Latest error code read
+                event: int
+                    Type of event
                 error_msg: str
                     Latest error message read
         """        
         self.status_code = status_code
         self.error_code = error_code
+        self.event = event
         self.error_msg = error_msg
 
     def get_state_string(self):
         if self.status_code in DeviceStatus.DEVICE_STATE:
             return DeviceStatus.DEVICE_STATE[self.status_code]
         return f'unknown ({self.status_code})'
+    
+    def get_event_string(self):
+        if self.event in DeviceStatus.EVENT_TYPE:
+            return DeviceStatus.EVENT_TYPE[self.event]
+        return f'unknown ({self.event})'
 
     def __str__(self):
-        return f'DeviceStatus : {self.get_state_string()}, Error #{self.error_code} : {self.error_msg}'
+        return f'DeviceStatus : {self.get_state_string()}, Event : {self.get_event_string()}, Error #{self.error_code} : {self.error_msg}'
 
 
 #Testing

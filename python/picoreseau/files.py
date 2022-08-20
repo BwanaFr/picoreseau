@@ -249,14 +249,19 @@ class ApplicationFile:
     """
 
     def __init__(self, data):
-        self.drive = bytes([0x40 + data[0]]).decode('utf-8')
+        self.drive = int(data[0])
         #Remove spaces in name and append extension
         self.file_name = data[1:-3].decode('utf-8').strip()
-        self.file_name += '.'
-        self.file_name += data[-3:].decode('utf-8').strip()
+        self.extension = data[-3:].decode('utf-8').strip()
 
     def __str__(self):
-        return f'ApplicationFile on drive {self.drive} with name {self.file_name}'
+        return f'ApplicationFile on drive {self.get_drive_name()} with name {self.file_name}.{self.get_file_name()}'
+
+    def get_drive_name(self):
+        return bytes([0x40 + self.drive]).decode('utf-8')
+    
+    def get_file_name(self):
+        return f'{self.file_name}.{self.extension}'
 
 class NRConfigurationFile:
     """

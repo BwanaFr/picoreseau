@@ -242,3 +242,7 @@ void resetReceiverState() {
         dma_channel_abort(rxDMAChannel);
     }
 }
+
+void setRXEnable(bool enable) {
+    pio_sm_set_enabled(rxPIO, rxDataSM, enable);
+}
