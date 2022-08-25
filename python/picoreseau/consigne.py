@@ -102,7 +102,7 @@ class Consigne:
 
     logger = logging.getLogger("Consigne")
 
-    def __init__(self, src=None):
+    def __init__(self, bin_size=None):
         """
         Class constructor
         """
@@ -117,8 +117,8 @@ class Consigne:
         self.computer = 0
         self.application = 0
         self.ctx_data = bytearray(0)
-        if src:            
-            self.from_bytes(src)
+        self.bin_size = bin_size
+        self.padded = True
 
     def from_bytes(self, b):
         """
@@ -157,18 +157,25 @@ class Consigne:
             self.delayed = True
 
     def to_bytes(self):
-        # Consigne length is always a multiple of 4
+        # Compute length of the consigne
         length = self.CONSIGNE_HEADER_SIZE - 2 + len(self.ctx_data)
-        if length % 4 != 0:
-            length = int(length/4) + 1
-        else:
-            length = int(length/4)
+        if self.bin_size:
+            # If size of the consigne is specified (and big enough), use it
+            if length < self.bin_size:
+                length = self.bin_size
+        if self.padded:
+            if length % 4 != 0:
+                length = int(length/4) + 1
+            else:
+                length = int(length/4)
+            length *= 4 
         # Create consigne
         code_tache = self.code_tache
         if self.delayed:
             code_tache |= 0x80
+        
         ret = bytearray(struct.pack(self.CONSIGNE_HEADER,
-                        length*4,
+                        length,
                         self.dest,
                         code_tache,
                         self.code_app,
@@ -180,7 +187,7 @@ class Consigne:
         # Add context data
         ret.extend(self.ctx_data)
         # Insert padding
-        rem_bytes = (length*4) - (len(ret) -2)
+        rem_bytes = length - (len(ret) -2)
         ret.extend(bytearray(rem_bytes))
         return ret
     

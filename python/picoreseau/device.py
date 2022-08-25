@@ -173,7 +173,8 @@ class PicoreseauDevice(threading.Thread):
         self.logger.debug(f'Reading {total_bytes} for consigne')
         c = self.device.read(__EP_IN__, total_bytes)
         peer = struct.unpack_from(self.__CONSIGNE_HEADER_REPLY__, c)
-        ret = Consigne(c[1:])
+        ret = Consigne()
+        ret.from_bytes(c[1:])
         return ret, peer[0]
 
     def reset_device_state(self):
@@ -200,7 +201,7 @@ class PicoreseauDevice(threading.Thread):
         # set the active configuration. With no arguments, the first
         # configuration will be the active one
         dev.set_configuration()
-        return PicoreseauDevice(dev)
+        return PicoreseauDevice(dev, 0)
 
 
 class DeviceStatus:

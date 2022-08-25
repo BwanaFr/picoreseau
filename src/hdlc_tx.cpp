@@ -62,8 +62,10 @@ void setClock(bool enabled)
 {
     if(enabled){
         // Waits for the line to be free
-        wait_for_no_clock();
-        dataActive = true;
+        if(!dataActive){
+            wait_for_no_clock();
+            dataActive = true;
+        }
         gpio_put(txEnablePin, true); 
     }else{
         dataActive = false;
@@ -77,8 +79,9 @@ void setClock(bool enabled)
  * Send data to bus
  * @param buffer buffer to be sent, without CRC
  * @param len lenght of the buffer to be sent
+ * @param keepClock if true, TX of clock will remain active
  **/
-void sendData(const uint8_t* buffer, uint len)
+void sendData(const uint8_t* buffer, uint len, bool keepClock)
 {
     setRXEnable(false);
     setClock(true);
@@ -119,6 +122,8 @@ void sendData(const uint8_t* buffer, uint len)
         tight_loop_contents();
     }
     setRXEnable(true);
-    sleep_us(50);
-    setClock(false);
+    if(!keepClock){
+        sleep_us(15);
+        setClock(false);
+    }
 }

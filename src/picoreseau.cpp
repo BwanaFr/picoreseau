@@ -52,8 +52,8 @@ uint16_t to_thomson(uint16_t val){
 void dump_current_consigne() {
     printf("****** Consigne *******\n");
     printf("Lenght : %u, dest : %u\n", current_consigne.length, current_consigne.dest);
-    printf("Network task code : %u, Application task code : %u\n", current_consigne.data.code_tache,
-                current_consigne.data.code_app);
+    printf("Network task code : %u (delayed %u), Application task code : %u\n", (current_consigne.data.code_tache & 0x7f),
+                ((current_consigne.data.code_tache & 0x80) != 0), current_consigne.data.code_app);
     printf("Msg bytes %u, Code page : %u, Code address : $%04x\n", to_thomson(current_consigne.data.msg_len),
                 current_consigne.data.page, to_thomson(current_consigne.data.msg_addr));
     printf("Computer : %u, Application : %u\n", current_consigne.data.ordinateur, current_consigne.data.application);
@@ -64,7 +64,7 @@ void dump_current_consigne() {
             printf("\n");
         }
     }
-    printf("\n*************************");
+    printf("\n*************************\n");
 }
 
 /**
@@ -161,6 +161,7 @@ receiver_status send_ctrl(uint8_t to, CTRL_WORD ctrl, uint8_t& payload, CTRL_WOR
             sendData(pl, sizeof(pl));
             if(expected == MCNONE){
                 ret = done;
+                retriesCount = 0;
             }else{
                 ret = busy;
                 retriesCount = 0;
@@ -326,13 +327,20 @@ void receive_initial_call() {
 }
 
 void send_disconnect() {
-    receiver_status status = send_ctrl(disconnect_peer, MCDISC, peers[disconnect_peer].msg_num, MCUA);
+    printf("Sending disconnection to station %u\n", disconnect_peer);
+    uint8_t msg_num = 0;
+    receiver_status status = busy;
+    while((status = send_ctrl(disconnect_peer, MCDISC, msg_num, MCUA)) == busy){
+        tight_loop_contents();
+    }
     if(status == done){
         //TODO: Handle error
         peers[disconnect_peer].waiting = false;
         disconnect_peer = 0;
         set_nr_state(NR_IDLE);
         nr_command = NR_NONE;
+    }else{
+        printf("Disconnection failed!\n");
     }
 }
 
@@ -344,11 +352,13 @@ void send_consigne() {
     if(!peers[dest].waiting){
         printf("Performing initial call on peer %d\n", dest);
         appel = MCAPI;
-        peers[dest].msg_num = 0;
+        peers[dest].msg_num = 0xFF;
     }
     printf("Sending send_ctrl\n");
     //TODO: Handle error, timeout...
-    while(send_ctrl(dest, appel, peers[dest].msg_num) != done){
+    //In this case, the message lenght is given by multiple of 4
+    uint8_t consLen = current_consigne.length/4;
+    while(send_ctrl(dest, appel, consLen) != done){
         tight_loop_contents();    
     }
     printf("Waits echo\n");
@@ -358,16 +368,20 @@ void send_consigne() {
         nr_usb_set_error(TIMEOUT, "Echo timeout!");
         return;
     }
+    sleep_us(110);
     //Send the consigne
     uint len = consigne_to_buffer(&current_consigne, peers[dest], buffer);
-    printf("Sending a consigne of %d bytes\n", len);
     bool no_ack = false;
     for(int i=0;i<5;++i){
-        sendData(buffer, len);    
-        if(current_consigne.data.code_tache & 0x80){
-            printf("Immediate execution\n");
+        setClock(true);
+        sleep_us(50);
+        sendData(buffer, len, true);    
+        sleep_us(100);
+        setClock(false);
+        /*if(current_consigne.data.code_tache & 0x80){
+            printf("Delayed execution (at disconnect)\n");
             return;
-        }
+        }*/
         printf("Wait for ack\n");
         //Waits for ack
         CTRL_WORD ack = peers[dest].waiting ? MCOK : MCPCH;

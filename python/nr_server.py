@@ -32,8 +32,9 @@ class Server:
         self.logger.info(f'Looking for signature {signature}')
         if signature in self.cfg_file.identifiers:
             load_file = self.cfg_file.identifiers[signature]
-            #self.send_binary_file(load_file, station)
             self.send_download_request(load_file, station)
+            # time.sleep(0.5)
+            # self.device.disconnect_peer(station.id)
             # report = bytes([0x0, 0x50, 0x00, 0x00])           
             #self.send_report(report, station)
             # self.send_new_address(0x5000, 1597, 0, station)
@@ -180,17 +181,13 @@ class Server:
         bin_file = files.NanoreseauFile(bin_file_path)
         cons = Consigne()
         cons.dest = station.id
-        cons.code_tache = Consigne.TC_FILE
-        cons.delayed = True
-        cons.code_app = 16  #TELE
+        cons.code_tache = Consigne.TC_EXEC_CODE
+        cons.delayed = False
+        # cons.code_app = 0  #TELE
         cons.computer = Consigne.COMPUTER_MO5
-        cons.application = bin_file.creation_language
-        cons.ctx_data = struct.pack('>BB8s3s', 
-            0x1, file.drive, Server.pad_file_name(file.file_name, 8).encode('utf-8'), Server.pad_file_name(file.extension, 3).encode('utf-8')
-        )
+        # cons.application = 0
+        cons.ctx_data = b'\x34\x52\x11\x8C\x20\x80\x23\x06\x11\x8C\x20\xCC\x23\x14\x1A\xFF\xCE\x20\xAC\x86\x10\xAE\xE1\xAF\xC1\x4A\x26\xF9\x10\xCE\x20\xAC\x1C\x00\x35\xD2'
         self.device.send_consigne(cons)
-        time.sleep(0.01)
-        self.device.disconnect_peer(station.id)
 
     def send_binary_file(self, file, station):
         """

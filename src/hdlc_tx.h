@@ -16,7 +16,8 @@ void setClock(bool enabled);
  * Send data to bus
  * @param buffer buffer to be sent, without CRC
  * @param len lenght of the buffer to be sent
+ * @param keepClock if true, TX of clock will remain active
  **/
-void sendData(const uint8_t* buffer, uint len);
+void sendData(const uint8_t* buffer, uint len, bool keepClock = false);
 
 #endif
