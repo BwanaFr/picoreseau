@@ -25,13 +25,13 @@ class USBCommand:
         if "tx_data" in kwargs:
             # Send data to nanoreseau
             self.cmd = USBCommand.CMD_PUT_DATA
-            self.payload = struct.pack('<H', len(kwargs["tx_data"]))
+            self.payload = struct.pack('<BH', kwargs["peer"], len(kwargs["tx_data"]))
         if "rx_data" in kwargs:
-            # Send data to nanoreseau
+            # Get data from nanoreseau
             self.cmd = USBCommand.CMD_GET_DATA
-            self.payload = struct.pack('<H', len(kwargs["rx_data"]))
+            self.payload = struct.pack('<BH', kwargs["peer"], len(kwargs["rx_data"]))
         if "disconnect" in kwargs:
-            # Send data to nanoreseau
+            # Disconnect peer
             self.cmd = USBCommand.CMD_DISCONNECT
             self.payload = struct.pack('B', kwargs["disconnect"])
     

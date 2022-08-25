@@ -210,5 +210,7 @@ class Consigne:
         return Consigne.get_enum_string(Consigne.APPLICATION, value)
 
     def __str__(self):
-        return f'Consigne : Tache {self.get_code_task_string(self.code_tache)} {self.delayed and "Delayed" or ""}, app {self.code_app}, msg_len {self.msg_len}, page {self.page}, addr ${self.msg_addr:04x}'
+        c_bin = ''.join(f'{letter:02x} ' for letter in self.ctx_data)
+        return f'Consigne : Tache {self.get_code_task_string(self.code_tache)} {self.delayed and "Delayed" or ""},\
+app {self.code_app}, msg_len {self.msg_len}, page {self.page}, addr ${self.msg_addr:04x}, comp {self.get_computer_string(self.computer)}, payload : {c_bin}'
 

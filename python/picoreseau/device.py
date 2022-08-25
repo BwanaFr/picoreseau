@@ -1,7 +1,7 @@
 import logging
+from multiprocessing import Event
 import numbers
 from pydoc import doc
-import threading
 import ctypes
 from time import sleep
 from queue import Queue
@@ -17,12 +17,10 @@ __EP_IN__ = 0x83    # Picoreseau data USB endpoint in
 
 # Things to change/do:
 # - Add concept of session to handle message numbers (should be done in MCU)
-# - Maybe remove the thread in PicoreseauDevice
 # - Add an acknowledge mechanism for all commands send to MCU (to retrieve next msg_num)
 
 
-class PicoreseauDevice(threading.Thread):
-
+class PicoreseauDevice():
 
     __STATE_REPLY_STRUCT__ = 'BBB60s'    # State reply structure definition
     # typedef struct USB_STATUS_OUT {
@@ -39,7 +37,7 @@ class PicoreseauDevice(threading.Thread):
     """
         Class representing the Picoreseau device
     """
-    def __init__(self, usb_device, poll_interval=5):
+    def __init__(self, usb_device, poll_interval=1):
         """
             Class constructor
             
@@ -50,57 +48,24 @@ class PicoreseauDevice(threading.Thread):
             poll_interval:
                 Device status polling interval in ms
         """
-        super().__init__(daemon=False)
-        self.stopThread = False
         self.device = usb_device
-        self.__status_cb__ = None
-        self.poll_interval = poll_interval/1000
-        self.__msg_queue__ = Queue()
+        self.last_status = None
+        self.poll_interval = poll_interval
 
-    def register_callback(self, status_changed_cb=None):
+    def wait_new_status(self):
         """
-            Register callback to be called when the device state changes
-
-            Parameters
-            ----------
-            status_changed_cb:
-                Callback function for change of status            
+            Waits and get new device status
         """
-        self.__status_cb__ = status_changed_cb
-
-    def stop(self):
-        thread_id = self.get_id()
-        res = ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id,
-              ctypes.py_object(SystemExit))
-        if res > 1:
-            ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, 0)
-            print('Exception raise failure')
-
-    def get_id(self):
-        # returns id of the respective thread
-        if hasattr(self, '_thread_id'):
-            return self._thread_id
-        for id, thread in threading._active.items():
-            if thread is self:
-                return id
-
-    def run(self):
-        """
-            Thread method
-        """
-        last_status = None
-        last_error = None
         
-        while True:
-            sleep(self.poll_interval)
+        while True:            
             status = self.get_state()
-            if status.status_code != last_status or status.error_code != last_error \
-                or status.event != DeviceStatus.EVT_NONE:
-                last_status = status.status_code
-                last_error = status.error_code
+            if status.changed(self.last_status):
+                self.last_status = status
                 self.logger.debug(f'New status : {str(status)}')
-                if self.__status_cb__:
-                    self.__status_cb__(self, status)
+                break
+            else:
+                sleep(self.poll_interval/1000)
+        return self.last_status
 
     def disconnect_peer(self, peer):
         """
@@ -109,7 +74,16 @@ class PicoreseauDevice(threading.Thread):
         self.logger.debug(f'Disconnecting peer #{peer}')
         cmd = USBCommand(disconnect=peer)
         self.device.write(__EP_OUT__, cmd.to_bytes())
-            
+    
+    def wait_for_completion(self):
+        while True:
+            #TODO: Timeout here
+            state = self.wait_new_status()
+            if state.event == DeviceStatus.EVT_ERROR:
+                raise Exception(state.error_msg)
+            elif state.event == DeviceStatus.EVT_CMD_DONE:
+                return
+
     def send_consigne(self, consigne):
         """
             Sends a consigne to a device
@@ -123,13 +97,12 @@ class PicoreseauDevice(threading.Thread):
                 Message number in the network frame
         """
         self.logger.debug(f'Sending consigne : {str(consigne)}')
-        c_bin = ''.join(f'{letter:02x}' for letter in consigne.to_bytes())
-        self.logger.debug(f'Sending consigne : {c_bin}')
         cmd = USBCommand(consigne=consigne)
         self.device.write(__EP_OUT__, cmd.to_bytes())
-        # TODO: Wait for end of transmission on bus and check errors
+        self.wait_for_completion()
 
-    def send_data(self, data, dest, msg_num):
+
+    def send_data(self, data, dest):
         """
             Sends binary data to a device (vas-y recois)
 
@@ -139,10 +112,12 @@ class PicoreseauDevice(threading.Thread):
                 Binary data to be send
             dest : int
                 Slave address to send data to
-            msg_num : int
-                Message number
         """
-        pass
+        self.logger.debug(f'Sending {len(data)} binary data to {dest}')
+        cmd = USBCommand(peer=dest, tx_data=data)
+        self.device.write(__EP_OUT__, cmd.to_bytes())
+        self.device.write(__EP_OUT__, data)
+        self.wait_for_completion()
 
     def get_state(self):
         """
@@ -201,7 +176,7 @@ class PicoreseauDevice(threading.Thread):
         # set the active configuration. With no arguments, the first
         # configuration will be the active one
         dev.set_configuration()
-        return PicoreseauDevice(dev, 0)
+        return PicoreseauDevice(dev)
 
 
 class DeviceStatus:
@@ -278,15 +253,12 @@ class DeviceStatus:
     def __str__(self):
         return f'DeviceStatus : {self.get_state_string()}, Event : {self.get_event_string()}, Error #{self.error_code} : {self.error_msg}'
 
-
-#Testing
-if __name__ == "__main__":
-    logging.basicConfig()
-    logging.getLogger().setLevel(logging.DEBUG)
-    dev = PicoreseauDevice.detect_device()
-    dev.start()
-    try:
-        while True:
-            sleep(1)
-    except KeyboardInterrupt:
-        dev.stop()
+    def changed(self, old_status):
+        if old_status:
+            if old_status.status_code != self.status_code or \
+                old_status.error_code != self.error_code or \
+                self.event != DeviceStatus.EVT_NONE:
+                return True
+            else:
+                return False
+        return True

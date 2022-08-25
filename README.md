@@ -1,8 +1,7 @@
 # picoreseau
 A nanoreseau USB adapter based on raspberry pico.
 
-Modules to be implemented:
-- Clock detector to detect when bus is free (PIO + interrupts)
-- HDLC TX/RX to send/receive data (PIO + DMA)
-- CRC-16 verification
-- USB endpoints to exchange with outside (TinyUSB)
+This adapter will be managed by a Python server to be able to handle requests comming from nanoreseau peers.
+
+# acknowledgements
+Many thanks to Fool-DupleX for helping me in the implementation of the protocol.

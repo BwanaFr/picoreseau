@@ -2,8 +2,6 @@ import struct
 from datetime import date
 import os
 import sys
-from tabnanny import NannyNag
-import re
 
 class BinaryCode :
     """

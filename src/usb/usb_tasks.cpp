@@ -81,11 +81,9 @@ void nr_usb_tasks() {
                         break;
                     case CMD_PUT_DATA:
                         // Host sends binary data to a peer
-                        printf("USB: Put data\n");
                         usb_state = RECEIVE_DATA;
                         break;
                     case CMD_GET_DATA:
-                        printf("USB: Get data\n");
                         usb_state = SENDING_DATA_HEADER;
                         break;
                     case CMD_DISCONNECT:
@@ -138,14 +136,18 @@ void nr_usb_tasks() {
             //Prepare to receive data on USB
             if(tud_vendor_available()){
                 //Gets number of following bytes
+                uint8_t peer = 0;
+                lenRx = tud_vendor_read(&peer, sizeof(peer));
                 uint16_t rx_tx_len = 0;
                 lenRx = tud_vendor_read(&rx_tx_len, sizeof(rx_tx_len));
                 printf("Will receive %u/%lu bytes\n", rx_tx_len, lenRx);
                 int32_t rx_len = rx_tx_len;
                 absolute_time_t start = get_absolute_time();
+                uint8_t* buffer = usb_buffer;
                 while(rx_len>0){
                     if(tud_vendor_available()) {
-                        uint32_t r = tud_vendor_read(usb_buffer, rx_len);
+                        uint32_t r = tud_vendor_read(buffer, rx_len);
+                        buffer += r;
                         rx_len -= r;
                     }
                     tud_task();
@@ -153,6 +155,7 @@ void nr_usb_tasks() {
                 int64_t elapsed_us = absolute_time_diff_us(start, get_absolute_time());
                 double speed = (rx_tx_len * (1000000.0/elapsed_us)) / 1024.0;
                 printf("RX completed in %lldus (%fkB/s)\n", elapsed_us, speed);
+                request_nr_tx_data(usb_buffer, rx_tx_len, peer);
                 usb_state = IDLE;
             }
             break;
@@ -198,7 +201,9 @@ void nr_usb_set_state(NR_STATE state) {
 void nr_usb_set_error(NR_ERROR error, const char* errMsg) {
     mutex_enter_blocking(&usb_mutex);
     status_out.error = error;
-    status_out.event = EVT_ERROR;
+    if(error != NO_ERROR){
+        status_out.event = EVT_ERROR;
+    }
     memset(status_out.errorMsg, 0, sizeof(status_out.errorMsg));
     strlcpy(status_out.errorMsg, errMsg, sizeof(status_out.errorMsg));
     mutex_exit(&usb_mutex);

@@ -114,6 +114,12 @@ void request_nr_disconnect(uint8_t peer);
 void request_nr_consigne(const Consigne* consigne);
 
 /**
+ * Request to send data to a device (alled from USB functions)
+ * Vas-y recois
+ */
+void request_nr_tx_data(const void* buffer, uint16_t size, uint8_t peer);
+
+/**
  * Sets the main state machine state
  **/
 void set_nr_state(NR_STATE state);

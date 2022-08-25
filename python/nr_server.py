@@ -13,9 +13,9 @@ class Station:
     """
         This class represents a nanoreseau station
     """
-    def __init__(self, station_id):
+    def __init__(self, station_id, computer):
         self.id = station_id
-        self.waiting = False
+        self.computer = computer
 
 class Server:
     logger = logging.getLogger("Server")
@@ -32,18 +32,21 @@ class Server:
         self.logger.info(f'Looking for signature {signature}')
         if signature in self.cfg_file.identifiers:
             load_file = self.cfg_file.identifiers[signature]
-            self.send_download_request(load_file, station)
-            # time.sleep(0.5)
-            # self.device.disconnect_peer(station.id)
-            # report = bytes([0x0, 0x50, 0x00, 0x00])           
-            #self.send_report(report, station)
-            # self.send_new_address(0x5000, 1597, 0, station)
+            bin_file_path = Path(self.base_path).joinpath(load_file.get_drive_name()).joinpath(load_file.get_file_name())        
+            bin_file = files.NanoreseauFile(bin_file_path)
+            #TODO: Change code depending on target (MO5, TO7)
+            self.send_execute_code_request(station,  b'\x34\x52\x11\x8C\x20\x80\x23\x06\x11\x8C\x20\xCC\x23\x14\x1A\xFF\xCE\x20\xAC\x86\x10\xAE\xE1\xAF\xC1\x4A\x26\xF9\x10\xCE\x20\xAC\x1C\x00\x35\xD2')
+            # Send where to download the file
+            self.send_new_address(bin_file.binary_data.bin_code[0].code_address, len(bin_file.binary_data.bin_code[0].data), bin_file.binary_data.bin_code[0].code_page, station)
+            # Send file to computer
+            self.device.send_data(bin_file.binary_data.bin_code[0].data, station.id)
+            # Send code to computer in order to launch the MENU (last two bytes are the address specified in bin_file.binary_data.bin_code[0].code_address)
+            self.send_execute_code_request(station,  b'\x10\xCE\x20\xCC\x7E\x50\x00', True)
+            self.device.disconnect_peer(station.id)
         else:
             self.logger.info(f'Station identifier {signature} not found in configuration file')
             self.device.disconnect_peer(station.id)
         
-
-
     # Maps of tasks
     SERVER_TASKS = {
         Consigne.TC_INIT_CALL : {
@@ -103,40 +106,6 @@ class Server:
         self.cfg_file = None
         self.on_line_sta = {}
 
-    def dev_status_cb(self, device, status):
-        """
-            USB device callback
-        """
-        self.logger.info(f'New state : {str(status)}')
-        if status.event == DeviceStatus.EVT_SELECTED:
-            self.logger.info('Device selected, receiving consigne')
-            c, station_num = device.get_consigne()
-            self.logger.info(f'Received consigne {str(c)} from {station_num}')
-            if not station_num in self.on_line_sta:
-                self.logger.info(f'Discovered new station #{station_num}')
-                station = Station(station_num)
-                self.on_line_sta[station_num] = station
-            else:
-                station = self.on_line_sta[station_num]
-            # Try to find a task to be executed for this consigne
-            if not c.code_tache in self.SERVER_TASKS:
-                self.logger.error(f'Unsupported task code : {c.code_tache}. Disconnecting peer.')
-                device.disconnect_peer(station.id)
-                return
-            tasks = self.SERVER_TASKS[c.code_tache]
-            task_name = Consigne.get_code_task_string(c.code_tache)
-            if not c.code_app in tasks:
-                self.logger.error(f'Unsupported application code {c.code_app} for task {task_name}. Disconnecting peer.')
-                device.disconnect_peer(station.id)
-                return
-            task = tasks[c.code_app]
-            if not task[0]:
-                self.logger.error(f'No handler defined for task {task[1]}/{task[2]}. Disconnecting peer.')
-                device.disconnect_peer(station.id)
-                return
-            # Call the handler for this task
-            task[0](self, c, station)
-
     @staticmethod
     def pad_file_name(name, length):
         """
@@ -160,6 +129,7 @@ class Server:
         """
         cons = Consigne()
         cons.dest = station.id
+        cons.computer = station.computer
         cons.code_tache = Consigne.TC_COPY_REPORT
         cons.ctx_data = data
         self.device.send_consigne(cons)
@@ -167,26 +137,23 @@ class Server:
     def send_new_address(self, address, lenght, page, station):
         cons = Consigne()
         cons.dest = station.id
+        cons.computer = station.computer
         cons.code_tache = Consigne.TC_INIT_CALL
         cons.msg_addr = address
         cons.msg_len = lenght
         cons.page = page
         self.device.send_consigne(cons)
 
-    def send_download_request(self, file, station):
+    def send_execute_code_request(self, station, code, delayed=False):
         """
-            Sends a download request to specified station
+            Sends a execute code request to specified station
         """
-        bin_file_path = Path(self.base_path).joinpath(file.get_drive_name()).joinpath(file.get_file_name())        
-        bin_file = files.NanoreseauFile(bin_file_path)
-        cons = Consigne()
+        cons = Consigne(60)
         cons.dest = station.id
+        cons.computer = station.computer
+        cons.delayed = delayed
         cons.code_tache = Consigne.TC_EXEC_CODE
-        cons.delayed = False
-        # cons.code_app = 0  #TELE
-        cons.computer = Consigne.COMPUTER_MO5
-        # cons.application = 0
-        cons.ctx_data = b'\x34\x52\x11\x8C\x20\x80\x23\x06\x11\x8C\x20\xCC\x23\x14\x1A\xFF\xCE\x20\xAC\x86\x10\xAE\xE1\xAF\xC1\x4A\x26\xF9\x10\xCE\x20\xAC\x1C\x00\x35\xD2'
+        cons.ctx_data = code
         self.device.send_consigne(cons)
 
     def send_binary_file(self, file, station):
@@ -214,7 +181,7 @@ class Server:
             cons.ctx_data = struct.pack('>B8s3sB', 
                 file.drive, Server.pad_file_name(file.file_name, 8).encode('utf-8'), Server.pad_file_name(file.extension, 3).encode('utf-8'), 0 #bin_data.loading_byte
             )
-            self.device.send_consigne(cons)
+            self.device.send_consigne(cons)      
 
     def init_server(self):
         """
@@ -246,8 +213,6 @@ class Server:
         self.device = PicoreseauDevice.detect_device()
         if not self.device:
             raise Exception("No USB picoreseau device found!")
-        self.device.register_callback(self.dev_status_cb)
-        self.device.start()
         self.logger.info("USB picoreseau found! Server is ready...")
 
 
@@ -258,12 +223,37 @@ class Server:
         if not self.cfg_file or not self.device:
             raise Exception("Server not initialized!")
         #Server loop, see what we do in it...
-        try:
-            while True:
-                time.sleep(1)
-        except:
-            pass
-        self.device.stop()
+        while True:
+            status = self.device.wait_new_status()
+            self.logger.info(f'New state : {str(status)}')
+            if status.event == DeviceStatus.EVT_SELECTED:
+                self.logger.info('Device selected, receiving consigne')
+                c, station_num = self.device.get_consigne()
+                self.logger.info(f'Received consigne {str(c)} from {station_num}')
+                if not station_num in self.on_line_sta:
+                    self.logger.info(f'Discovered new station #{station_num}')
+                    station = Station(station_num, c.computer)
+                    self.on_line_sta[station_num] = station
+                else:
+                    station = self.on_line_sta[station_num]
+                # Try to find a task to be executed for this consigne
+                if not c.code_tache in self.SERVER_TASKS:
+                    self.logger.error(f'Unsupported task code : {c.code_tache}. Disconnecting peer.')
+                    self.device.disconnect_peer(station.id)
+                    continue                    
+                tasks = self.SERVER_TASKS[c.code_tache]
+                task_name = Consigne.get_code_task_string(c.code_tache)
+                if not c.code_app in tasks:
+                    self.logger.error(f'Unsupported application code {c.code_app} for task {task_name}. Disconnecting peer.')
+                    self.device.disconnect_peer(station.id)
+                    continue
+                task = tasks[c.code_app]
+                if not task[0]:
+                    self.logger.error(f'No handler defined for task {task[1]}/{task[2]}. Disconnecting peer.')
+                    self.device.disconnect_peer(station.id)
+                    continue
+                # Call the handler for this task
+                task[0](self, c, station)
 
 
 if __name__ == "__main__":

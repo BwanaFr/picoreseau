@@ -36,6 +36,7 @@ static NR_CMD nr_command = NR_NONE;     // Pending command to be executed
 
 static Consigne current_consigne;       // Actual consigne
 static uint8_t disconnect_peer = 0;     // Peer to disconnect
+static uint16_t buffer_size = 0;        // Size to transmit
 
 static Station peers[32];           // Peers status
 
@@ -252,7 +253,7 @@ void receive_initial_call() {
             wait_for_no_clock();
             sleep_us(50);   // Do not send echo too fast, it seems to be not supported by MO5
             setClock(true); // Output echo clock during 300ns, giving time to "silence detection" circuit to go false
-            sleep_us(300);  
+            sleep_us(300);
             nextState = GET_COMMAND;
         }
         break;
@@ -352,7 +353,7 @@ void send_consigne() {
     if(!peers[dest].waiting){
         printf("Performing initial call on peer %d\n", dest);
         appel = MCAPI;
-        peers[dest].msg_num = 0xFF;
+        peers[dest].msg_num = 0xFF; //TODO: Not right, consigne lenght must be used here
     }
     printf("Sending send_ctrl\n");
     //TODO: Handle error, timeout...
@@ -397,12 +398,54 @@ void send_consigne() {
          nr_usb_set_error(TIMEOUT, "No ack");
          return;
     }
+    nr_usb_set_cmd_done();
+}
 
-    if(!peers[dest].waiting){
-        //Needs to ack
-        send_ctrl(dest, MCAMA, peers[dest].msg_num);
-        peers[dest].waiting = true;
+void send_data()
+{
+    CTRL_WORD appel = MCVR;
+    uint8_t peer = buffer[0];
+    while(send_ctrl(peer, appel, peers[peer].msg_num) != done){
+        tight_loop_contents();
     }
+    printf("Waits echo\n");
+    // Waits for echo, TODO: handle error
+    receiver_status status = wait_for_echo();
+    if(status == time_out){
+        nr_usb_set_error(TIMEOUT, "Echo timeout!");
+        return;
+    }
+    sleep_us(110);
+    buffer[1] = peers[peer].msg_num;
+    buffer[2] = DEV_NUMBER;
+    bool no_ack = false;
+    for(int i=0;i<5;++i){
+        setClock(true);
+        sleep_us(50);
+        sendData(buffer, buffer_size, true);    
+        sleep_us(100);
+        setClock(false);
+        /*if(current_consigne.data.code_tache & 0x80){
+            printf("Delayed execution (at disconnect)\n");
+            return;
+        }*/
+        printf("Wait for ack\n");
+        //Waits for ack
+        CTRL_WORD ack = peers[peer].waiting ? MCOK : MCPCH;
+        uint8_t caller = 0;
+        if(wait_for_ctrl(peers[peer].msg_num, caller, ack, DEFAULT_RX_TIMEOUT) != done){
+            no_ack = true;
+        }else{
+            no_ack = false;
+            break;
+        }
+    }
+    if(no_ack){
+         nr_usb_set_error(TIMEOUT, "No ack");
+         return;
+    }
+    nr_usb_set_cmd_done();
+
 }
 
 /**
@@ -425,6 +468,14 @@ void request_nr_consigne(const Consigne* consigne) {
     nr_command = NR_SEND_CONSIGNE;
 }
 
+void request_nr_tx_data(const void* txBuffer, uint16_t size, uint8_t peer) {
+    //TODO: Not optimal. We may directly copy to buffer
+    //more synchro between USB and this core must be added here
+    buffer[0] = peer;
+    memcpy(&buffer[3], txBuffer, size);
+    buffer_size = size + 3;
+    nr_command = NR_SEND_DATA;
+}
 
 /**
  * Application main entry
@@ -484,7 +535,7 @@ int main() {
                     send_consigne();
                     break;
                 case NR_SEND_DATA:
-                    // Sends data to a peer
+                    send_data();
                     break;
                 case NR_GET_DATA:
                     // Receives data from a peer
