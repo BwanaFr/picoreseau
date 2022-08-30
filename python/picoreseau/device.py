@@ -74,6 +74,7 @@ class PicoreseauDevice():
         self.logger.debug(f'Disconnecting peer #{peer}')
         cmd = USBCommand(disconnect=peer)
         self.device.write(__EP_OUT__, cmd.to_bytes())
+        #TODO Waits for disconnection
     
     def wait_for_completion(self):
         while True:

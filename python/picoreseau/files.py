@@ -2,6 +2,7 @@ import struct
 from datetime import date
 import os
 import sys
+from pathlib import Path
 
 class BinaryCode :
     """
@@ -253,7 +254,7 @@ class ApplicationFile:
         self.extension = data[-3:].decode('utf-8').strip()
 
     def __str__(self):
-        return f'ApplicationFile on drive {self.get_drive_name()} with name {self.file_name}.{self.get_file_name()}'
+        return f'ApplicationFile on drive {self.get_drive_name()} with name {self.get_file_name()}'
 
     def get_drive_name(self):
         return bytes([0x40 + self.drive]).decode('utf-8')
@@ -305,6 +306,21 @@ class NRConfigurationFile:
             ret += f'\n{id} -> {str(self.identifiers[id])}'
         return ret
 
+    @staticmethod
+    def get_available_drives(root_path):
+        """
+            Return an array of available emulated drive
+
+            Parameters:
+            -----------
+            root_path: str
+                Root path of the folder containing emulated drives
+        """
+        ret = []
+        for i in range(1,10):
+            folder = Path(root_path).joinpath(bytes([0x40 + i]).decode('utf-8'))
+            ret.append(folder.is_dir())
+        return ret
 
 # For testing
 if __name__ == "__main__":

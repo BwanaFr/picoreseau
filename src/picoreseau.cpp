@@ -158,6 +158,7 @@ receiver_status send_ctrl(uint8_t to, CTRL_WORD ctrl, uint8_t& payload, CTRL_WOR
             pl[0] = to;
             pl[1] = ctrl | (payload & 0xF);
             pl[2] = DEV_NUMBER;
+            wait_for_no_clock();
             //TODO: Maybe timeout if bus is busy for too long
             sendData(pl, sizeof(pl));
             if(expected == MCNONE){
@@ -379,6 +380,7 @@ void send_consigne() {
         sendData(buffer, len, true);    
         sleep_us(100);
         setClock(false);
+        sleep_us(250);
         /*if(current_consigne.data.code_tache & 0x80){
             printf("Delayed execution (at disconnect)\n");
             return;
