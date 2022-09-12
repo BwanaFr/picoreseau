@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 import re
 import os
-from enum import IntEnum
+from enum import IntEnum, Enum
 from datetime import datetime, timezone
 
 class Station:
@@ -20,11 +20,7 @@ class Station:
     def __init__(self, station_id):
         self.id = station_id            # Station address (1..31)
         self.computer = None            # Type of computer (None if offline)
-        self.identifier = '        '    # Station identifier (received from ID CTA)
-        self.open_files = []            # List of open files
-        self.reserved_files = []        # List of reserved files
-        self.file_listing = None        # Used for CATP/CATS
-        self.file_listing_index = 0     # Actual catalog index
+        self.clean()
 
     def clean(self):
         """
@@ -83,6 +79,50 @@ class NRErrors(IntEnum):
     RECORD_OFFSET_TOO_BIG = 185
     FILE_PARTIALLY_RESERVED = 186
 
+class FileTasks(int, Enum):
+
+    def __new__(cls, value, description):
+        obj = int.__new__(cls, value)
+        obj._value_ = value
+        obj.description = description
+        return obj
+
+    OUVFL = (36, 'Open file for reading')
+    OUVFE = (37, 'Open file for writing')
+    LIRFI = (40, 'Read from file')
+    ECRFI = (41, 'Write to file')
+    FERFI = (42, 'Close file')
+    CREFI = (39, 'Create file')
+    SUPFI = (45, 'Delete file')
+    RENFI = (46, 'Rename file')
+    RESFI = (43, 'Reserve file')
+    RELFI = (44, 'Release file')
+    COPIE = (47, 'Copy file')
+    CATP = (34, 'File catalog')
+    CATS = (35, 'File catalog')
+    DATE = (32, 'Request date and time')
+    ID = (33, 'Declare an identifier to server')
+    IMPRIM = (48, 'Use server printer')
+    SYSINF = (49, 'Request system informations')
+    SYSTEM = (50, 'Back to operating system')
+    DSKF = (51, 'Request free space on a server disk')
+    LIRATT = (52, 'Get file attributes')
+    ECRATT = (53, 'Write file attributes')
+    SETMODE = (54, 'Sets file creation mode')
+    CHBIN = (55, 'Load binary file')
+    CLEAR = (56, 'Clean slave descriptor on server')
+    RBUFF = (57, 'Read common buffer')
+    WBUFF = (58, 'Write common buffer')
+    CHAENR = (65, 'Load an indexed file record')
+    GARENR = (64, 'Park an indexed file record')
+    SUPENR = (66, 'Delete an indexed file record')
+    RESENR = (67, 'Reserve an indexed file record')
+    RELENR = (68, 'Release an indexed file record')
+    NES = (69, 'Request next indexed file record number')
+    DNE = (70, 'Request last indexed file record number')
+    PROG = (1, 'Exchange program')
+    TELE = (16, 'Download program')
+
 
 class Server:
 
@@ -111,7 +151,7 @@ class Server:
             # Download binary chuncks
             bin_file = self.send_binary_file(load_file, station_id)
             # Send code to computer in order to launch the MENU (last two bytes are the address specified in bin_file.binary_data.bin_code[0].code_address)
-            # TODO: Put this code somewhere else
+            # TODO: Change code depending on target (MO5, TO7)
             #self.send_execute_code_request(station,  b'\x10\xCE\x20\xCC\x7E\x50\x00', True)
             exec_code = bytearray(b'\x10\xCE\x20\xCC\x7E\x50\x00')
             struct.pack_into('>H', exec_code, 5, bin_file.binary_data.exec_address)
@@ -128,14 +168,15 @@ class Server:
         mode, = struct.unpack_from('>B', consigne.ctx_data, 12)
         nr_file = files.ApplicationFile(bytes(consigne.ctx_data[:12]))
         self.logger.info(f'CHBIN request from {station_id}: {str(nr_file)} mode : {mode}')
-        self.send_execute_code_request(station_id,  b'\x34\x52\x11\x8C\x20\x80\x23\x06\x11\x8C\x20\xCC\x23\x14\x1A\xFF\xCE\x20\xAC\x86\x10\xAE\xE1\xAF\xC1\x4A\x26\xF9\x10\xCE\x20\xAC\x1C\x00\x35\xD2')
+        # Save the stack (seems not needed)
+        # self.send_execute_code_request(station_id,  b'\x34\x52\x11\x8C\x20\x80\x23\x06\x11\x8C\x20\xCC\x23\x14\x1A\xFF\xCE\x20\xAC\x86\x10\xAE\xE1\xAF\xC1\x4A\x26\xF9\x10\xCE\x20\xAC\x1C\x00\x35\xD2')
         bin_file = self.send_binary_file(nr_file, station_id)
-        cpt_rendu = struct.pack('>BHB', 0, bin_file.binary_data.exec_address, bin_file.binary_data.exec_page)
-        self.send_report(cpt_rendu, station_id, bin_file.binary_data.exec_address, bin_file.binary_data.exec_page)
         self.logger.info(f'CHBIN loaded file {str(nr_file)}')
+        # Jump to execution address
+        # TODO: Change code depending on target (MO5, TO7)
         exec_code = bytearray(b'\x10\xCE\x20\xCC\x7E\x50\x00')
         struct.pack_into('>H', exec_code, 5, bin_file.binary_data.exec_address)
-        self.send_execute_code_request(station_id, exec_code, False)
+        self.send_execute_code_request(station_id, exec_code, True)
         self.disconnect_station(station_id)
 
     def _handle_clear(self, consigne, station_id):
@@ -174,13 +215,19 @@ class Server:
             Handles CATP request
         """
         file_filter = files.ApplicationFile(bytes(consigne.ctx_data[:12]))
-        self.logger.info(f'CATP request from {station_id}: using filter {str(file_filter)}')
-        # List all files matching the regex
-        file_regex = file_filter.get_file_name().replace('?', '[a-zA-Z0-9\\s]')
+        filter_file_name = Server.pad_file_name(file_filter.file_name, 8) + '.' + Server.pad_file_name(file_filter.extension, 3)
+        self.logger.info(f'CATP request from {station_id}: using filter {str(filter_file_name)}')
+        # List all files matching the regex        
+        file_regex = filter_file_name.replace('?', '[a-zA-Z0-9\\s]')
         root_folder = Path(self.base_path).joinpath(file_filter.get_drive_name())
         self.stations[station_id].file_listing = []
         for f in os.scandir(root_folder):
-            file_name = Server.pad_file_name(f.name, 12, False)
+            file_parts = f.name.rsplit('.', 1)
+            file_name = file_parts[0]
+            file_extension = ''
+            if len(file_parts) > 1:
+                file_extension = '.' + Server.pad_file_name(file_parts[1], 3)
+            file_name = Server.pad_file_name(file_name, 8) + file_extension
             if re.match(file_regex, file_name, re.IGNORECASE):
                 self.stations[station_id].file_listing.append(f)
         self.stations[station_id].file_listing_index = 0
@@ -202,7 +249,9 @@ class Server:
         nb_names = 0
         if consigne.msg_len < FILE_FORMAT_SIZE:
             # Not enough space for buffer
-            err_msg = NRErrors.RX_BUFFER_TOO_SMALL            
+            err_msg = NRErrors.RX_BUFFER_TOO_SMALL
+        elif len(self.stations[station_id].file_listing) == 0:
+            err_msg = NRErrors.FILE_NOT_EXISTING
         else:
             buffer = bytearray(consigne.msg_len)
             for i in range(self.stations[station_id].file_listing_index, len(self.stations[station_id].file_listing)):
@@ -301,52 +350,52 @@ class Server:
         if error == 0:
             self.stations[station_id].identifier = identification
         cpt_rendu = struct.pack('>B', error)
-        self.send_report(cpt_rendu, station_id, delayed=False)
+        self.send_report(cpt_rendu, station_id, delayed=True)
         self.disconnect_station(station_id)
 
 
     # Maps of tasks
     SERVER_TASKS = {
         Consigne.TC_INIT_CALL : {
-            0 : (_handle_init_call, 'INIT', 'Initial call'),
+            0 : _handle_init_call,
         },
         Consigne.TC_FILE : {
             # TODO : Handle file requests here
-            36 : (None, 'OUVFL', 'Open file for reading'),
-            37 : (None, 'OUVFE', 'Open file for writing'),
-            40 : (None, 'LIRFI', 'Read from file'),
-            41 : (None, 'ECRFI', 'Write to file'),
-            42 : (None, 'FERFI', 'Close file'),
-            39 : (None, 'CREFI', 'Create file'),
-            45 : (None, 'SUPFI', 'Delete file'),
-            46 : (None, 'RENFI', 'Rename file'),
-            43 : (None, 'RESFI', 'Reserve file'),
-            44 : (None, 'RELFI', 'Release file'),
-            47 : (None, 'COPIE', 'Copy file'),
-            34 : (_handle_catp, 'CATP', 'File catalog'),
-            35 : (_handle_cats, 'CATS', 'File catalog'),
-            32 : (_handle_date, 'DATE', 'Request date and time'),
-            33 : (_handle_id, 'ID', 'Declare an identifier to server'),
-            48 : (None, 'IMPRIM', 'Use server printer'),
-            49 : (_handle_sysinf, 'SYSINF', 'Request system informations'),
-            50 : (None, 'SYSTEM', 'Back to operating system'),
-            51 : (_handle_dskf, 'DSKF', 'Request free space on a server disk'),
-            52 : (None, 'LIRATT', 'Get file attributes'),
-            53 : (None, 'ECRATT', 'Write file attributes'),
-            54 : (None, 'SETMODE', 'Sets file creation mode'),
-            55 : (_handle_chbin, 'CHBIN', 'Load binary file'),
-            56 : (_handle_clear, 'CLEAR', 'Clean slave descriptor on server'),
-            57 : (None, 'RBUFF', 'Read common buffer'),
-            58 : (None, 'WBUFF', 'Write common buffer'),
-            65 : (None, 'CHAENR', 'Load an indexed file record'),
-            64 : (None, 'GARENR', 'Park an indexed file record'),
-            66 : (None, 'SUPENR', 'Delete an indexed file record'),
-            67 : (None, 'RESENR', 'Reserve an indexed file record'),
-            68 : (None, 'RELENR', 'Release an indexed file record'),
-            69 : (None, 'NES', 'Request next indexed file record number'),
-            70 : (None, 'DNE', 'Request last indexed file record number'),
-             1 : (None, 'PROG', 'Exchange program'),
-            16 : (None, 'TELE', 'Download program'),
+            FileTasks.OUVFL : None,
+            FileTasks.OUVFE : None,
+            FileTasks.LIRFI : None,
+            FileTasks.ECRFI : None,
+            FileTasks.FERFI : None,
+            FileTasks.CREFI : None,
+            FileTasks.SUPFI : None,
+            FileTasks.RENFI : None,
+            FileTasks.RESFI : None,
+            FileTasks.RELFI : None,
+            FileTasks.COPIE : None,
+            FileTasks.CATP : _handle_catp,
+            FileTasks.CATS : _handle_cats,
+            FileTasks.DATE : _handle_date,
+            FileTasks.ID : _handle_id,
+            FileTasks.IMPRIM : None,
+            FileTasks.SYSINF : _handle_sysinf,
+            FileTasks.SYSTEM : None,
+            FileTasks.DSKF : _handle_dskf,
+            FileTasks.LIRATT : None,
+            FileTasks.ECRATT : None,
+            FileTasks.SETMODE : None,
+            FileTasks.CHBIN : _handle_chbin,
+            FileTasks.CLEAR : _handle_clear,
+            FileTasks.RBUFF : None,
+            FileTasks.WBUFF : None,
+            FileTasks.CHAENR : None,
+            FileTasks.GARENR : None,
+            FileTasks.SUPENR : None,
+            FileTasks.RESENR : None,
+            FileTasks.RELENR : None,
+            FileTasks.NES : None,
+            FileTasks.DNE : None,
+            FileTasks.PROG : None,
+            FileTasks.TELE : None,
         },
     }
 
@@ -416,12 +465,13 @@ class Server:
         """
             Sends a execute code request to specified station
         """
-        cons = Consigne()
+        cons = Consigne(60)
         cons.dest = station_id
         cons.computer = self.stations[station_id].computer
         cons.delayed = delayed
         cons.code_tache = Consigne.TC_EXEC_CODE
         cons.ctx_data = code
+        cons.msg_len = len(code)
         self.device.send_consigne(cons)
 
     def send_binary_file(self, file, station_id):
@@ -434,6 +484,21 @@ class Server:
         if not bin_file.binary_data and type(bin_file.binary_data) != files.BinaryData:
             self.logger.error(f'File {bin_file.identifier} is not a valid binary file!')
             return
+        #if bin_file.creation_language != 0:
+        exec_code = bytearray(b'\x86\x01\xB7\x1F\xF7\x39')
+        # cons = Consigne(60)
+        # cons.dest = station_id
+        # cons.computer = self.stations[station_id].computer
+        # cons.delayed = False
+        # cons.code_tache = Consigne.TC_EXEC_CODE
+        # cons.ctx_data = exec_code
+        # # cons.msg_addr = 0xDB1
+        # cons.msg_len = 0x6
+        # cons.code_app = 55
+        # self.device.send_consigne(cons)
+        # struct.pack_into('>B', exec_code, 1, bin_file.creation_language)
+        self.send_execute_code_request(station_id, exec_code, False)
+
         bin_data = bin_file.binary_data
         for c in bin_data.bin_code:
             # Send where to download the file
@@ -509,12 +574,19 @@ class Server:
                     self.disconnect_station(station_num)
                     continue
                 task = tasks[c.code_app]
-                if not task[0]:
-                    self.logger.error(f'No handler defined for task {task[1]}/{task[2]}. Disconnecting peer.')
+                if not task:
+                    value = c.code_app
+                    description = 'unknown'
+                    try:
+                        description = FileTasks(value).description
+                    except:
+                        pass
+                    self.logger.error(f'No handler defined for task {value}/{description}. Disconnecting peer.')
                     self.disconnect_station(station_num)
                     continue
+                # print(f'Task : {task[1]}')
                 # Call the handler for this task
-                task[0](self, c, station_num)
+                task(self, c, station_num)
 
 
 if __name__ == "__main__":

@@ -262,6 +262,7 @@ class ApplicationFile:
     def get_file_name(self):
         return f'{self.file_name}.{self.extension}'
 
+
 class NRConfigurationFile:
     """
         Class for loading a NR3.DATA configuration file
