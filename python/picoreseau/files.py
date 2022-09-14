@@ -206,14 +206,14 @@ class NanoreseauFile:
         if f.read(8).decode('utf-8') != '*NRUSTL*':
             raise Exception('Not a nanoreseau file (bad header)!')
         # Next 8 bytes are file identifier
-        self.identifier = f.read(8).decode('utf-8')
+        self.identifier = f.read(8).decode('utf-8') # Identifier of the station who created the file
         # Next byte is always 1
         b = f.read(1)
         if b != b'\x01':
             raise Exception('Bad nanoreseau file (at offset 16)')
-        self.type = int.from_bytes(f.read(1), 'little')
-        self.file_mode = int.from_bytes(f.read(1), 'little')
-        self.ms_dos_len = int.from_bytes(f.read(3), 'little')
+        self.type = int.from_bytes(f.read(1), 'little') # File type, 0: BASIC, 1: BASIC data, 2: Machine language, 3: source file, 5:indexed file
+        self.file_mode = int.from_bytes(f.read(1), 'little') # 0: Binary, 1: ASCII
+        self.ms_dos_len = int.from_bytes(f.read(3), 'little') # File lenght including header
         if f.read(1) != b'\x00':
             raise Exception('Bad nanoreseau file (at offset 22)')
         self.file_status = int.from_bytes(f.read(1), 'little')
@@ -262,6 +262,8 @@ class ApplicationFile:
     def get_file_name(self):
         return f'{self.file_name}.{self.extension}'
 
+    def get_virtual_location(self):
+        return self.get_drive_name() + ':\\' + self.get_file_name()
 
 class NRConfigurationFile:
     """

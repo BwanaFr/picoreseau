@@ -133,10 +133,11 @@ receiver_status wait_for_ctrl(uint8_t& payload, uint8_t& caller, CTRL_WORD expec
         if(wait_for_ctrl_nb(ret, payload, caller, expected)){
             return done;
         }
-        if((ret != busy) && (ret != done)){
-            //HDLC receiver error
-            return ret;
-        }
+        // if((ret != busy) && (ret != done)){
+        //     //HDLC receiver error
+        //     printf("wait_for_ctrl -> HDLC receiver error %u\n", ret);
+        //     return ret;
+        // }
     }while((timeout == 0) || (absolute_time_diff_us(get_absolute_time(), stopTime) > 0));
     //Here, a timeout occured
     return time_out;
@@ -363,7 +364,7 @@ void send_consigne() {
     while(send_ctrl(dest, appel, consLen) != done){
         tight_loop_contents();    
     }
-    printf("Waits echo\n");
+    // printf("Waits echo\n");
     // Waits for echo, TODO: handle error
     receiver_status status = wait_for_echo();
     if(status == time_out){
@@ -385,7 +386,7 @@ void send_consigne() {
             printf("Delayed execution (at disconnect)\n");
             return;
         }*/
-        printf("Wait for ack\n");
+        // printf("Wait for ack\n");
         //Waits for ack
         CTRL_WORD ack = peers[dest].waiting ? MCOK : MCPCH;
         uint8_t caller = 0;
@@ -410,7 +411,7 @@ void send_data()
     while(send_ctrl(peer, appel, peers[peer].msg_num) != done){
         tight_loop_contents();
     }
-    printf("Waits echo\n");
+    // printf("Waits echo\n");
     // Waits for echo, TODO: handle error
     receiver_status status = wait_for_echo();
     if(status == time_out){
@@ -431,7 +432,7 @@ void send_data()
             printf("Delayed execution (at disconnect)\n");
             return;
         }*/
-        printf("Wait for ack\n");
+        // printf("Wait for ack\n");
         //Waits for ack
         CTRL_WORD ack = peers[peer].waiting ? MCOK : MCPCH;
         uint8_t caller = 0;

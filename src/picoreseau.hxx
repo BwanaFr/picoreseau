@@ -73,7 +73,7 @@ typedef struct Station {
     uint8_t msg_num;    // Station actual message number
 }Station;
 
-#define DEFAULT_RX_TIMEOUT  2000    // RX timeout in microseconds
+#define DEFAULT_RX_TIMEOUT  10000    // RX timeout in microseconds
 #define SEND_CTRL_RETRIES 5         // Number of times to try to resend the control word on bus
 
 /**
